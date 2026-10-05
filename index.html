@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="description" content="Which Bus? Next departures from your stop — scheduled and live." />
+  <meta name="theme-color" content="#0b1f3a" />
+  <link rel="icon" href="/favicon.svg" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon-180x180.png" />
+  <link rel="stylesheet" href="/src/styles.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  <title>Which Bus?</title>
+</head>
+<body>
+  <header class="app-header">
+    <a class="brand" href="./" aria-label="Which Bus? home">
+      <img src="/favicon.svg" alt="" width="28" height="28" /> Which Bus?
+    </a>
+    <button id="origin-btn" class="origin-pill" type="button"></button>
+  </header>
+
+  <main id="app" class="app"></main>
+
+  <dialog id="search-dialog" class="search-dialog">
+    <form class="search-form" method="dialog" novalidate>
+      <div class="search-bar">
+        <button id="search-back" class="icon-btn" type="button" hidden aria-label="Back to places">‹</button>
+        <input id="search-input" type="search" placeholder="Search for a place…" autocomplete="off" spellcheck="false" />
+        <button class="icon-btn" type="button" id="search-close" aria-label="Close">×</button>
+      </div>
+      <div class="search-tabs" role="tablist">
+        <button id="tab-name" class="tab on" type="button" role="tab">By name</button>
+        <button id="tab-map" class="tab" type="button" role="tab">On the map</button>
+      </div>
+      <button id="locate-btn" class="locate-btn" type="button" hidden>📍 Use my location</button>
+      <p id="search-hint" class="search-hint">Type a place name — e.g. Hull, Sculcoates, Beverley.</p>
+      <ul id="search-results" class="search-results" role="listbox"></ul>
+      <div id="map-pane" class="map-pane" hidden>
+        <div id="osm-map" class="osm-map"></div>
+        <p class="map-hint">Drag the pin to where you’re travelling, then</p>
+        <button id="map-find" class="btn-primary" type="button">Find stops near the pin</button>
+        <p id="map-status" class="map-status"></p>
+        <ul id="map-results" class="search-results" role="listbox"></ul>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

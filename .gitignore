@@ -1,0 +1,24 @@
+# dependencies
+node_modules/
+
+# build output — `npm run build` regenerates this; the Dockerfile builds it itself
+dist/
+
+# runtime cache (server/cache.mjs, only when CACHE_DB points at a local path)
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# logs / editor / OS noise
+*.log
+npm-debug.log*
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# local env overrides (never commit real ones)
+.env
+.env.*
+!.env.example
