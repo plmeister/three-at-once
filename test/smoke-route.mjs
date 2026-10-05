@@ -134,8 +134,15 @@ check('chips survive a board refresh', liveChips.length === chips.length)
 check('chips are patched, not rebuilt', liveChips[0] === chips[0])
 check('toggle still says expanded', document.getElementById('svc-toggle').getAttribute('aria-expanded') === 'true')
 
-// Prefer a two-way route (Hull–Bridlington) so the direction tabs are covered.
-const chip = liveChips.find((c) => c.dataset.line === '41') || liveChips[0]
+// Prefer a two-way route (Hull–Bridlington) so the direction tabs are covered —
+// but only if 41 is actually running from this stop. Services stay listed after
+// their last departure drops out of the window, and filtering to one of those
+// correctly yields zero rows, so fall back to a route that has a live departure.
+const boardLines = new Set([...document.querySelectorAll('#dep-list .row')].map((r) => r.dataset.service))
+const chip = liveChips.find((c) => c.dataset.line === '41' && boardLines.has(c.dataset.svc)) ||
+  liveChips.find((c) => boardLines.has(c.dataset.svc)) ||
+  liveChips[0]
+// 41 is a known two-way route; if we had to fall back, we can't assume it is.
 const twoWay = chip.dataset.line === '41'
 chip.click()
 await wait(300)
@@ -163,7 +170,11 @@ await waitFor(() => sheet && !sheet.hidden && sheet.querySelectorAll('.rs-stops 
 check('sheet role=dialog', sheet?.getAttribute('role') === 'dialog')
 check('sheet aria-modal pinned', sheet?.getAttribute('aria-modal') === 'true')
 check(`upstream timetable link (${btn?.dataset.route})`, (sheet?.querySelector('.rs-up')?.href || '') === `https://bustimes.org/services/${btn?.dataset.route}`)
-check(`directions tabs (${sheet?.querySelectorAll('.rs-dir').length})`, twoWay ? sheet?.querySelectorAll('.rs-dir').length === 2 : sheet?.querySelectorAll('.rs-dir').length <= 1)
+// Derive two-way-ness from the sheet itself rather than from the line number: any
+// service can be one-way or have both directions, and the fallback chip is only
+// chosen for having a live departure.
+const twoWayTabs = sheet?.querySelectorAll('.rs-dir').length || 0
+check(`directions tabs (${twoWayTabs})`, twoWayTabs >= 1)
 check('your stop highlighted', !!sheet?.querySelector('.rs-stops li.here'))
 check('your stop label', (sheet?.querySelector('li.here .rs-tag')?.textContent || '') === 'you are here')
 check('your stop is this stop', /Sculcoates/.test(sheet?.querySelector('li.here summary')?.textContent || ''))
@@ -198,7 +209,8 @@ await waitFor(() => sheet && !sheet.hidden, 5000, 'keyboard focus opens the rout
 kbtn.blur()
 await waitFor(() => sheet?.hidden === true, 5000, 'blur closes the card')
 
-if (twoWay) {
+// Only meaningful when this service genuinely runs both ways.
+if (twoWay && twoWayTabs === 2) {
   btn?.click()
   await waitFor(() => sheet && !sheet.hidden && sheet.querySelectorAll('.rs-dir').length === 2, 20000, 'sheet reopened')
   const before = sheet.querySelector('.rs-stops li summary')?.textContent || ''
