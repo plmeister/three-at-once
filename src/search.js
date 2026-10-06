@@ -184,18 +184,44 @@ function stopMatches(label, q) {
 }
 
 function stemOf(label) {
-  const m = String(label ?? '').match(/^([\s\S]*?)\s*\((?:bay|stand|gate|stance|stop)\s*[A-Za-z0-9]*\)$/i)
-  return m ? m[1].trim().toLowerCase() : null
+  // drop trailing parenthetical like "(Bay 3)", "(Stand A)", "(Stop D)", even
+  // when another parenthetical is embedded before it (e.g. "Road (X) (Stand 1)")
+  let s = String(label ?? '')
+  let m
+  while ((m = s.match(/^([\s\S]*?)\s*\((?:bay|stand|gate|stance|stop|stand\s*\d+)\b[^)]*\)\s*$/i))) {
+    s = m[1].trim()
+    if (s === String(label ?? '').trim()) break
+  }
+  return s.length >= 3 ? s.toLowerCase() : null
 }
 
 // on-street lettered stands: "Alfred Gelder Street A →", "... F ←"
-const LETTER_STOP_RE = /^(.+?)\s+([A-Z])\s*([↑↓←→↗↘↙↖↕])$/
+// York-style: "Rail Station (Stop RA) ↑", "Stonebow (SA) ↗", "Piccadilly (PA) ↘"
+// "George Street A ->", "George Street B <-"
+const LETTER_ARROW_RE = /^(.+?)\s+[A-Z][A-Z0-9]*\s*[←→\-<>]+\s*$/
+// "Rail Station (Stop RA) ↑", "Bradford Interchange Bus Station (stand 5)"
+const LETTER_STOP_RE = /^(.+?)\s+\([^\)]+\)\s*([↑↓←→↗↘↙↖↕])?\s*$/
+// "Alfred Gelder Street A →"
+const LETTER_STOP_RE_OLD = /^(.+?)\s+([A-Z][A-Z0-9]*)\s*([↑↓←→↗↘↙↖↕])\s*$/
 
 function stemOfLetter(label) {
-  const m = String(label ?? '').match(LETTER_STOP_RE)
-  const stem = m ? m[1].trim().toLowerCase() : null
-  // require a multi-word stem so bare letter stops ("X →") can't coalesce
-  return stem && stem.split(/\s+/).length >= 3 ? stem : null
+  const s = String(label ?? '')
+  let m = s.match(LETTER_ARROW_RE)
+  if (m) {
+    const stem = m[1].trim().toLowerCase()
+    if (stem.split(/\s+/).length >= 2) return stem
+  }
+  m = s.match(LETTER_STOP_RE_OLD)
+  if (m) {
+    const stem = m[1].trim().toLowerCase()
+    if (stem.split(/\s+/).length >= 3) return stem
+  }
+  m = s.match(LETTER_STOP_RE)
+  if (m) {
+    const stem = m[1].trim().toLowerCase()
+    if (stem.length >= 2) return stem
+  }
+  return null
 }
 
 // same street, opposite kerbs: "Cottingham King Street ↑" / "… ↓". These are one
@@ -205,12 +231,15 @@ const ARROW_STOP_RE = /^(.+?)\s*[↑↓←→↗↘↙↖↕]\s*$/
 
 function stemOfArrow(label) {
   const m = String(label ?? '').match(ARROW_STOP_RE)
-  const stem = m ? m[1].trim().toLowerCase() : null
-  return stem && stem.split(/\s+/).length >= 2 ? stem : null
+  if (!m) return null
+  const stem = m[1].trim().toLowerCase()
+  return stem.length >= 3 ? stem : null
 }
 
 function stemOfLabel(label) {
-  for (const stem of [stemOf(label), stemOfLetter(label), stemOfArrow(label)]) {
+  const arrow = stemOfArrow(label)
+  if (arrow && arrow.length >= 3) return arrow
+  for (const stem of [stemOf(label), stemOfLetter(label)]) {
     if (stem && stem.length >= 3) return stem
   }
   return null
