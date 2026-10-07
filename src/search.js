@@ -183,74 +183,51 @@ function stopMatches(label, q) {
   return words.every((w) => l.includes(w))
 }
 
-function stemOf(label) {
-  // drop trailing parenthetical like "(Bay 3)", "(Stand A)", "(Stop D)", even
-  // when another parenthetical is embedded before it (e.g. "Road (X) (Stand 1)")
-  let s = String(label ?? '')
-  let m
-  while ((m = s.match(/^([\s\S]*?)\s*\((?:bay|stand|gate|stance|stop|stand\s*\d+)\b[^)]*\)\s*$/i))) {
-    s = m[1].trim()
-    if (s === String(label ?? '').trim()) break
-  }
-  return s.length >= 3 ? s.toLowerCase() : null
-}
+// "same street, opposite kerbs": "Cottingham King Street ↑" / "… ↓", and the
+// dominant bustimes form "Park Street (nr) ↑" / "Park Street (opp) ↓". One place
+// to stand, not two — collapse them so the board shows the route both ways and
+// the destination filter picks the right side.
+const ARROW_STOP_RE = /^(.*?)\s*[↑↓←→↗↘↙↖↕]\s*$/
 
-// on-street lettered stands: "Alfred Gelder Street A →", "... F ←"
-// York-style: "Rail Station (Stop RA) ↑", "Stonebow (SA) ↗", "Piccadilly (PA) ↘"
-// "George Street A ->", "George Street B <-"
-const LETTER_ARROW_RE = /^(.+?)\s+[A-Z][A-Z0-9]*\s*[←→\-<>]+\s*$/
-// "Rail Station (Stop RA) ↑", "Bradford Interchange Bus Station (stand 5)"
-const LETTER_STOP_RE = /^(.+?)\s+\([^\)]+\)\s*([↑↓←→↗↘↙↖↕])?\s*$/
-// "Alfred Gelder Street A →"
-const LETTER_STOP_RE_OLD = /^(.+?)\s+([A-Z][A-Z0-9]*)\s*([↑↓←→↗↘↙↖↕])\s*$/
+// A trailing parenthetical only strips when it qualifies *which* stop at a place
+// we already know: a bay/stand/gate, a side of the road, a direction, a stand
+// letter. Never when it names a different place — "Tarbert (Harris)" is not
+// "Tarbert (Loch Fyne)", "Leixlip(Confey)" is not "Leixlip(Louisa Bridge)".
+const Q_ID = '(?:[A-Z]{1,2}\\d{0,3}|\\d{1,3}[A-Z]?|[A-Z])'
+const Q_KW = '(?:bay|stand|gate|stance|stop|platform|halt|entrance|arrivals?|arrival\\s+bay)'
+const Q_REL = '(?:opp|opposite|adj|adjacent|at|before|after|nr|near|o/s|outside|by|cnr|corner|in|on|across|just\\s+before|just\\s+after)'
+const Q_BND = '(?:(?:n|s|e|w|ne|nw|se|sw|north|south|east|west)[-\\s]?bound|inbound|outbound|northbound|southbound|eastbound|westbound)'
+const SUFFIX_PAREN_RE = new RegExp(
+  `^(?:${Q_KW}\\s*-\\s*${Q_KW}\\s*${Q_ID}|${Q_KW}\\s*${Q_ID}|${Q_REL}\\s*${Q_ID}|${Q_KW}|${Q_REL}|${Q_BND}|${Q_ID})$`,
+  'i'
+)
 
-function stemOfLetter(label) {
-  const s = String(label ?? '')
-  let m = s.match(LETTER_ARROW_RE)
-  if (m) {
-    const stem = m[1].trim().toLowerCase()
-    if (stem.split(/\s+/).length >= 2) return stem
+function stripStopSuffixes(label) {
+  let s = String(label ?? '').trim()
+  let m = s.match(ARROW_STOP_RE)
+  if (m) s = m[1].trim()
+  let guard = 0
+  while (guard++ < 6 && (m = s.match(/^(.*?)\s*\(([^)]*)\)\s*$/))) {
+    const base = m[1].trim()
+    if (base.length >= 3 && SUFFIX_PAREN_RE.test(m[2].trim())) s = base
+    else break
   }
-  m = s.match(LETTER_STOP_RE_OLD)
-  if (m) {
-    const stem = m[1].trim().toLowerCase()
-    if (stem.split(/\s+/).length >= 3) return stem
-  }
-  m = s.match(LETTER_STOP_RE)
-  if (m) {
-    const stem = m[1].trim().toLowerCase()
-    if (stem.length >= 2) return stem
-  }
-  return null
-}
-
-// same street, opposite kerbs: "Cottingham King Street ↑" / "… ↓". These are one
-// place to stand, not two — collapse them so the board shows the route both ways
-// and the destination filter picks the right side.
-const ARROW_STOP_RE = /^(.+?)\s*[↑↓←→↗↘↙↖↕]\s*$/
-
-function stemOfArrow(label) {
-  const m = String(label ?? '').match(ARROW_STOP_RE)
-  if (!m) return null
-  const stem = m[1].trim().toLowerCase()
-  return stem.length >= 3 ? stem : null
+  // on-street lettered stands: "George Street A", "Swansea Bus Station Stand A".
+  // Single letter or letter+digit only, so an acronym in the name survives
+  // ("O'Connell - GPO").
+  m = s.match(/^(.*?)\s+[A-Z]\d{0,2}$/)
+  if (m && m[1].trim().length >= 3) s = m[1].trim()
+  return s
 }
 
 function stemOfLabel(label) {
-  const arrow = stemOfArrow(label)
-  if (arrow && arrow.length >= 3) return arrow
-  for (const stem of [stemOf(label), stemOfLetter(label)]) {
-    if (stem && stem.length >= 3) return stem
-  }
-  return null
+  const s = stripStopSuffixes(label)
+  return s.length >= 3 ? s.toLowerCase() : null
 }
 
 // "(Bay 10)" / "F ←" / "↑" are suffixes on one place, not part of its name.
 function groupLabel(label) {
-  return String(label ?? '')
-    .replace(/\s*\([^)]*\)\s*$/, '')
-    .replace(/\s*(?:[A-Z]\s*)?[↑↓←→↗↘↙↖↕]\s*$/, '')
-    .trim()
+  return stripStopSuffixes(label) || String(label ?? '').trim()
 }
 
 const DIR_ORDER = ['↑', '↓', '→', '←', '↗', '↘', '↙', '↖', '↕', '']
