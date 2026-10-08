@@ -850,7 +850,19 @@ function renderStopPanel(containerId, stopInfo) {
   const count = isGroup ? (stopInfo.stops?.length || 0) : 0
   const fav = isFavourite(stopInfo)
   const members = isGroup ? (stopInfo.stops || []) : [stopInfo]
-  const services = ((containerId === 'origin-panel' && originServices) ? originServices : (stopInfo.services || [])).slice().sort(lineSort)
+  let services = ((containerId === 'origin-panel' && originServices) ? originServices : (stopInfo.services || [])).slice()
+  if (services.length === 0 && !isGroup && stopInfo.atco && containerId === 'origin-panel') {
+    // will be filled by ensureOriginServices; keep empty for now
+  } else if (services.length === 0 && !isGroup && stopInfo.atco && containerId === 'dest-panel') {
+    // fetch on demand
+    cachedStopServices(stopInfo.atco).then((svcs) => {
+      if (svcs.length) {
+        stopInfo.services = svcs
+        renderStopPanel(containerId, stopInfo)
+      }
+    }).catch(() => {})
+  }
+  services = services.sort(lineSort)
   let html = '<div class="stop-panel large">'
   html += '<div class="stop-panel-head">'
   html += '<button class="fav-toggle large" data-fav-panel="' + escapeHtml(containerId) + '" type="button" title="Favourite">' + (fav ? '★' : '☆') + '</button>'
