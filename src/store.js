@@ -213,3 +213,15 @@ export function sharedStateFromUrl() {
     operator: '',
   }
 }
+export function toggleFavourite(o) {
+  if (!validOrigin(o)) return
+  const key = favKey(o)
+  if (!key) return
+  const exists = state.favourites.some((f) => favKey(f) === key)
+  if (exists) {
+    state.favourites = state.favourites.filter((f) => favKey(f) !== key)
+  } else {
+    state.favourites.push(o)
+  }
+  persist()
+}

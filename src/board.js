@@ -15,6 +15,7 @@ let onVisibleFn = null
 let fetching = false
 let boardState = null
 let boardOrigin = null
+let boardTo = null
 let toInfo = null // { atco, slugs:Set|null, lines:Set, services:[] }
 let toAtcos = [] // every atco behind the destination — a merged group contributes all of them
 let toArrivals = null // Map<tripUrl, departure> at the destination stop
@@ -63,18 +64,10 @@ export function bootBoard(app, origin) {
   el.className = 'board'
   el.innerHTML = `
     <div class="board-head">
-      <div>
-        <span class="board-kicker">From</span>
-        <h1 class="stop-name">${escapeHtml(origin.label)}</h1>
-        <div class="stop-meta">
-          ${origin.kind === 'group'
-            ? `<span class="chip">${escapeHtml(String(origin.stops.length))} stops · merged</span>`
-            : `<code>${escapeHtml(origin.atco)}</code>
-               ${bayFromLabel(origin.label) ? `<span class="chip chip-bay">${escapeHtml(bayFromLabel(origin.label))}</span>` : ''}`}
-        </div>
+      <div class="board-main">
+        <div id="origin-panel"></div>
       </div>
       <div class="board-status">
-        <button class="icon-btn" id="btn-fav" type="button" title="Bookmark this stop">☆</button>
         <button class="icon-btn" id="btn-swap" type="button" title="Swap departure point and destination (reverse direction)">⇄</button>
         <button class="icon-btn" id="btn-clear" type="button" title="Clear stops and start again">✕</button>
         <button class="icon-btn" id="btn-share" type="button" title="Copy link to this journey (share it)">⇪</button>
@@ -83,7 +76,8 @@ export function bootBoard(app, origin) {
       </div>
     </div>
 
-    <div class="to-row" id="to-row">
+    <div class="dest-section">
+      <div id="dest-panel"></div>
       <button class="to-add" id="btn-set-to" type="button">＋ Set destination…</button>
     </div>
     <button class="jfav-btn" id="btn-jfav" type="button" disabled>⭑ Name & save this journey</button>
@@ -97,16 +91,23 @@ export function bootBoard(app, origin) {
 
     <div class="line-filter" id="line-filter" hidden></div>
 
-    <section class="svc-panel" id="svc-panel">
-      <button class="svc-toggle" id="svc-toggle" type="button" aria-expanded="false" hidden></button>
-      <div class="svc-list" id="svc-list" hidden></div>
-    </section>
+<!-- svc-panel removed in favor of stop panels -->
 
     <ul class="departures" id="dep-list" aria-live="polite"></ul>
     <p class="board-foot" id="board-foot"></p>
     <p class="fare-note" id="fare-note" hidden></p>
   `
   app.replaceChildren(el)
+  const st = getState()
+  boardTo = st.toStop || null
+  if (typeof renderStopPanel === 'function') {
+    renderStopPanel('origin-panel', boardOrigin)
+    if (typeof renderStopPanel === 'function') renderStopPanel('dest-panel', boardTo)
+  }
+  const setDestBtn = el.querySelector('#btn-set-to')
+  if (setDestBtn && boardTo) setDestBtn.style.display = 'none'
+  else if (setDestBtn) setDestBtn.style.display = 'inline-flex'
+
 
   const list = el.querySelector('#dep-list')
   const stamp = el.querySelector('#board-stamp')
@@ -433,6 +434,8 @@ async function ensureOriginServices() {
     merged.set(svc.slug, svc)
   }
   originServices = [...merged.values()]
+  if (typeof renderStopPanel === 'function') renderStopPanel('origin-panel', boardOrigin)
+
   return originServices
 }
 
@@ -583,6 +586,11 @@ function applyToStop(stop) {
   renderToChip(stop)
   renderRows()
   document.dispatchEvent(new Event('whichbus:tochange'))
+  boardTo = stop
+  if (typeof renderStopPanel === 'function') renderStopPanel('dest-panel', boardTo)
+  const setDestBtn = document.querySelector('#btn-set-to')
+  if (setDestBtn) setDestBtn.style.display = boardTo ? 'none' : 'inline-flex'
+
   if (!stop) return
   loadToServices().then(() => { renderRows(); refreshFareOps() })
   loadToArrivals().then(renderRows)
@@ -848,4 +856,74 @@ function escapeHtml(s) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
+}
+function renderStopPanel(containerId, stopInfo) {
+  const container = document.getElementById(containerId)
+  if (!container || !stopInfo) return
+  const isGroup = stopInfo.kind === 'group' || Array.isArray(stopInfo.stops)
+  const label = stopInfo.label || ''
+  const count = isGroup ? (stopInfo.stops?.length || 0) : 0
+  const fav = isFavourite(stopInfo)
+  const members = isGroup ? (stopInfo.stops || []) : [stopInfo]
+  const services = ((containerId === 'origin-panel' && originServices) ? originServices : (stopInfo.services || [])).slice().sort(lineSort)
+  let html = '<div class="stop-panel large">'
+  html += '<div class="stop-panel-head">'
+  html += '<button class="fav-toggle large" data-fav-panel="' + escapeHtml(containerId) + '" type="button" title="Favourite">' + (fav ? '★' : '☆') + '</button>'
+  html += '<div class="stop-panel-title">'
+  html += '<span class="stop-panel-icon">' + (isGroup ? '🏛' : '🚏') + '</span>'
+  html += '<span class="stop-panel-name">' + escapeHtml(label) + '</span>'
+  if (count) html += '<span class="chip">' + count + ' stops</span>'
+  html += '<button class="icon-btn small" data-replace="' + escapeHtml(containerId) + '" type="button" title="Replace stop">🔍</button>'
+  html += '</div></div>'
+  html += '<div class="stop-panel-body">'
+  if (members.length > 1) {
+    html += '<div class="members-section"><div class="section-label">Stops in this group</div>'
+    for (let i = 0; i < members.length; i++) {
+      const m = members[i]
+      const mf = isFavourite(m)
+      html += '<div class="member-row">'
+      html += '<span class="member-name">🚏 ' + escapeHtml(m.label) + '</span>'
+      if (m.atco) html += '<code>' + escapeHtml(m.atco) + '</code>'
+      html += '<button class="fav-toggle small" data-fav-mem="' + i + '" type="button">' + (mf ? '★' : '☆') + '</button>'
+      html += '</div>'
+    }
+    html += '</div>'
+  }
+  html += '<div class="services-section"><div class="section-label">' + services.length + ' route' + (services.length === 1 ? '' : 's') + ' calling here</div>'
+  if (services.length) {
+    html += '<div class="svc-grid">'
+    for (const svc of services) {
+      const next = nextTimeFor(svc.slug, svc.line)
+      html += '<div class="svc-item">'
+      html += '<button class="svc-chip' + (next ? '' : ' quiet') + '" type="button" data-svc="' + escapeHtml(svc.slug) + '" data-line="' + escapeHtml(svc.line || '') + '">'
+      html += '<b>' + escapeHtml(svc.line || '?') + '</b> <span>' + escapeHtml(svc.headline || svc.destination || '') + '</span>'
+      if (next) html += '<small>' + escapeHtml(next) + '</small>'
+      html += '</button>'
+      html += '</div>'
+    }
+    html += '</div>'
+  } else {
+    html += '<p class="muted">Loading routes…</p>'
+  }
+  html += '</div></div></div>'
+  container.innerHTML = html
+  container.querySelector('[data-fav-panel]')?.addEventListener('click', (e) => { e.stopPropagation(); toggleFavourite(stopInfo); renderStopPanel(containerId, stopInfo) })
+  container.querySelectorAll('[data-fav-mem]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation()
+      const idx = parseInt(btn.dataset.favMem,10)
+      const m = members[idx]
+      if (m) { toggleFavourite(m); renderStopPanel(containerId, stopInfo) }
+    })
+  })
+  container.querySelector('[data-replace]')?.addEventListener('click', (e) => {
+    e.stopPropagation()
+    if (containerId === 'origin-panel') {
+      if (typeof openOriginSearch === 'function') openOriginSearch()
+      else if (typeof openSearch === 'function') openSearch((s) => { /* handled by main */ }, 'origin')
+    } else if (containerId === 'dest-panel') {
+      if (typeof openToSearchFn === 'function') openToSearchFn()
+      else if (typeof openSearch === 'function') openSearch((s) => { applyToStop(s) }, 'to')
+    }
+  })
 }

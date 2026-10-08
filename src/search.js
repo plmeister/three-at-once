@@ -1,4 +1,4 @@
-import { searchLocalities, localityStops, localityDirections, nearby, stopDepartures, stopServices } from './api.js'
+import { searchLocalities, searchAll, localityStops, localityDirections, nearby, stopDepartures, stopServices } from './api.js'
 import { getState, getFavourites, removeFavourite } from './store.js'
 import { stopDirProfile, bestSharedLeg } from './routes.js'
 
@@ -110,43 +110,34 @@ async function search() {
     results().classList.remove('pending')
     return
   }
-  debounce = setTimeout(async () => {
-    hint().textContent = `Searching “${q}”…`
-    try {
-      const { localities, note } = await searchLocalities(q)
-      let items = []
-      const locs = localities.slice(0, 5)
-      for (const loc of localities) {
-        items.push({ type: 'locality', ...loc })
-        if (!locs.includes(loc)) continue
-        try {
-          const { stops } = await localityStops(loc.slug)
-          const matches = (stops || [])
-            .filter((s) => s.lines?.length && stopMatches(s.label, q))
-            .slice(0, 4)
-          for (const s of matches) items.push({ type: 'stop', ...s, indent: true })
-        } catch {
-          /* locality page failed — locality row is still clickable */
-        }
-      }
-      allSlate = items
-      slate = items
-      renderList()
-      if (localities.length && note) {
-        results().insertAdjacentHTML('afterbegin', `<li class="search-note">${escapeHtml(note)}</li>`)
-      }
-      if (!localities.length) hint().textContent = `No places found for “${q}”. Try a shorter name — “Kingswood”, “Grimsby”.`
-    } catch (err) {
-      console.error('search failed', err)
-      const detail = err && err.message ? err.message : String(err)
-      results().replaceChildren()
-      results().insertAdjacentHTML('afterbegin', `<li class="empty error">Search failed${detail ? ` (${escapeHtml(detail.slice(0, 60))})` : ''}. <button type="button" class="retry">Retry</button></li>`)
-      results().querySelector('.retry')?.addEventListener('click', search)
-      hint().textContent = ''
-    } finally {
-      results().classList.remove('pending')
-    }
-  }, 250)
+   debounce = setTimeout(async () => {
+     hint().textContent = `Searching “${q}”…`
+     try {
+       const res = await searchAll(q, 40)
+       const items = []
+       for (const r of res) {
+         if (r.type === 'locality') {
+           items.push({ type: 'locality', slug: r.slug, name: r.name, qualifier: r.qualifier, ctx: r.ctx })
+         } else if (r.type === 'stop') {
+           items.push({ type: 'stop', atco: r.atco, label: r.label || r.name, name: r.label || r.name, slug: r.slug, ctx: r.ctx, lines: [] })
+         }
+       }
+       allSlate = items
+       slate = items
+       renderList()
+       if (items.length === 0) hint().textContent = `No matches for “${q}”. Try a shorter name — “Kingswood”, “Grimsby”, “Sculcoates”.`
+       else hint().textContent = `${items.length} result${items.length === 1 ? '' : 's'} for “${q}”.`
+     } catch (err) {
+       console.error('search failed', err)
+       const detail = err && err.message ? err.message : String(err)
+       results().replaceChildren()
+       results().insertAdjacentHTML('afterbegin', `<li class="empty error">Search failed${detail ? ` (${escapeHtml(detail.slice(0, 60))})` : ''}. <button type="button" class="retry">Retry</button></li>`)
+       results().querySelector('.retry')?.addEventListener('click', search)
+       hint().textContent = ''
+     } finally {
+       results().classList.remove('pending')
+     }
+   }, 200)
 }
 
 function applyDirections(directions) {

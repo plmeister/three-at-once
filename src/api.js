@@ -14,8 +14,14 @@ export async function apiGet(endpoint, params) {
   return res.json()
 }
 
-export function searchLocalities(q) {
-  return apiGet('/api/search', { q })
+export async function searchLocalities(q) {
+  const { localities, note } = await apiGet('/api/search', { q })
+  return { localities: (localities || []).map((l) => ({ ...l, type: 'locality' })), note }
+}
+
+export async function searchAll(q, limit = 50) {
+  const { results = [] } = await apiGet('/api/search-all', { q, limit })
+  return results
 }
 
 export function localityStops(slug) {
@@ -26,8 +32,14 @@ export function localityDirections(slug) {
   return apiGet('/api/locality-directions', { slug })
 }
 
-export function stopDepartures(atco) {
-  return apiGet('/api/departures', { atco })
+export function nearby(lat, lon) {
+  return apiGet('/api/nearby', { lat, lon })
+}
+
+export function stopDepartures(atco, when) {
+  const params = { atco }
+  if (when) params.when = when.toISOString()
+  return apiGet('/api/departures', params)
 }
 
 export function stopServices(atco) {
@@ -36,8 +48,4 @@ export function stopServices(atco) {
 
 export function serviceStops(slug) {
   return apiGet('/api/service-stops', { slug })
-}
-
-export function nearby(lat, lon) {
-  return apiGet('/api/nearby', { lat, lon })
 }
