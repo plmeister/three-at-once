@@ -103,47 +103,86 @@ function atcoIndex(dir, atcos) {
   return dir.stops.findIndex((s) => at.has(s.atco))
 }
 
+function stopItem(stop, i, { isFrom = false, isTo = false } = {}) {
+  const li = document.createElement('li')
+  if (isFrom) li.classList.add('here')
+  if (isTo) li.classList.add('dest')
+
+  const num = document.createElement('span')
+  num.className = 'rs-num'
+  num.textContent = String(i + 1)
+
+  const details = document.createElement('details')
+  if (isFrom || isTo) details.open = true
+  const summary = document.createElement('summary')
+  summary.textContent = stop.name
+  details.append(summary)
+  if (stop.times?.length) {
+    const times = document.createElement('p')
+    times.className = 'rs-times'
+    times.textContent = stop.times.filter(Boolean).join(' · ')
+    details.append(times)
+  }
+  if (isFrom) {
+    const tag = document.createElement('span')
+    tag.className = 'rs-tag'
+    tag.textContent = 'you are here'
+    summary.append(tag)
+  } else if (isTo) {
+    const tag = document.createElement('span')
+    tag.className = 'rs-tag'
+    tag.textContent = 'your destination'
+    summary.append(tag)
+  }
+  li.append(num, details)
+  return li
+}
+
+// A run of same-locality stops collapsed into one fold, e.g. "Newland · 5 stops".
+function foldItem(label, stops, startIndex) {
+  const li = document.createElement('li')
+  li.className = 'rs-fold'
+  const details = document.createElement('details')
+  const summary = document.createElement('summary')
+  summary.textContent = `${label} · ${stops.length} stop${stops.length === 1 ? '' : 's'}`
+  details.append(summary)
+  const inner = document.createElement('ol')
+  inner.className = 'rs-stops rs-nested'
+  for (const [n, stop] of stops.entries()) inner.append(stopItem(stop, startIndex + n))
+  details.append(inner)
+  li.append(details)
+  return li
+}
+
 function renderStops(dir, { fromAtcos, toAtcos }) {
   const from = atcoIndex(dir, fromAtcos)
   const to = atcoIndex(dir, toAtcos)
   const list = document.createElement('ol')
   list.className = 'rs-stops'
-  for (const [i, stop] of dir.stops.entries()) {
-    const li = document.createElement('li')
-    const isFrom = i === from
-    const isTo = i === to
-    if (isFrom) li.classList.add('here')
-    if (isTo) li.classList.add('dest')
+  const stops = dir.stops
 
-    const num = document.createElement('span')
-    num.className = 'rs-num'
-    num.textContent = String(i + 1)
-
-    const details = document.createElement('details')
-    if (isFrom || isTo) details.open = true
-    const summary = document.createElement('summary')
-    summary.textContent = stop.name
-    details.append(summary)
-    if (stop.times?.length) {
-      const times = document.createElement('p')
-      times.className = 'rs-times'
-      times.textContent = stop.times.filter(Boolean).join(' · ')
-      details.append(times)
-    }
-    if (isFrom) {
-      const tag = document.createElement('span')
-      tag.className = 'rs-tag'
-      tag.textContent = 'you are here'
-      summary.append(tag)
-    } else if (isTo) {
-      const tag = document.createElement('span')
-      tag.className = 'rs-tag'
-      tag.textContent = 'your destination'
-      summary.append(tag)
-    }
-    li.append(num, details)
-    list.append(li)
+  // No complete journey selected (or ends not on this direction): flat list.
+  if (from < 0 || to < 0 || from > to) {
+    for (const [i, stop] of stops.entries()) list.append(stopItem(stop, i))
+    return list
   }
+
+  if (from > 0) list.append(foldItem('Earlier stops', stops.slice(0, from), 0))
+  list.append(stopItem(stops[from], from, { isFrom: true }))
+
+  let i = from + 1
+  while (i < to) {
+    const loc = stops[i].locality
+    let j = i
+    while (j < to && stops[j].locality === loc) j++
+    const run = stops.slice(i, j)
+    if (loc && run.length >= 2) list.append(foldItem(loc, run, i))
+    else for (const [n, stop] of run.entries()) list.append(stopItem(stop, i + n))
+    i = j
+  }
+
+  list.append(stopItem(stops[to], to, { isTo: true }))
+  if (to < stops.length - 1) list.append(foldItem('Later stops', stops.slice(to + 1), to + 1))
   return list
 }
 
@@ -223,10 +262,7 @@ function render(slug, opts, data) {
 
   function paint() {
     holder.replaceChildren(renderStops(dir, { fromAtcos, toAtcos }))
-    const i = atcoIndex(dir, fromAtcos)
-    if (i >= 0) {
-      holder.querySelectorAll('.rs-stops > li')[i]?.scrollIntoView?.({ block: 'center' })
-    }
+    holder.querySelector('.rs-stops > li.here')?.scrollIntoView?.({ block: 'center' })
   }
 
   paint()

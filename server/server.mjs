@@ -35,6 +35,40 @@ if (cacheDb) {
 }
 const cache = createCache(1000, { file: cacheDb })
 
+import { createGunzip } from 'node:zlib'
+import { pipeline } from 'node:stream/promises'
+import { createReadStream } from 'node:fs'
+import { Readable } from 'node:stream'
+
+let searchIndex = { stops: [], localities: [] }
+let stopLocality = new Map() // atco -> immediate locality name
+async function loadSearchIndex() {
+  try {
+    const gzPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'search-index.json.gz')
+    const jsonPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'search-index.json')
+    if (existsSync(jsonPath)) {
+      searchIndex = JSON.parse(await readFile(jsonPath, 'utf8'))
+    } else if (existsSync(gzPath)) {
+      const chunks = []
+      await pipeline(createReadStream(gzPath), createGunzip(), async (source) => {
+        for await (const chunk of source) chunks.push(chunk)
+      })
+      searchIndex = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+    }
+    const map = new Map()
+    for (const st of searchIndex.stops || []) {
+      const loc = st.c?.[0]
+      if (st.a && loc) map.set(st.a, loc)
+    }
+    stopLocality = map
+  } catch (err) {
+    console.error('failed to load search index', err)
+    searchIndex = { stops: [], localities: [] }
+    stopLocality = new Map()
+  }
+}
+loadSearchIndex()
+
 async function externalCached(key, parse, makeUrl, ttlMs) {
   const cached = cache.get(key)
   if (cached !== undefined) return cached
@@ -119,6 +153,75 @@ const server = http.createServer(async (req, res) => {
     console.log(`${req.method} ${url.pathname}${url.search.slice(0, 80)} -> ${res.statusCode} (${Date.now() - t0}ms) client=${req.headers['x-forwarded-for'] || req.socket.remoteAddress || '-'}`)
   })
 
+
+  if (url.pathname === '/api/search-all') {
+    const q = (url.searchParams.get('q') || '').trim()
+    if (!q) return badRequest(res, 'missing q')
+    try {
+      const ql = q.toLowerCase()
+      const words = ql.split(/\s+/).filter(Boolean)
+      const limit = Math.min(Number(url.searchParams.get('limit')) || 50, 200)
+      const results = []
+      const seen = new Set()
+
+      function scoreLocality(l) {
+        const name = String(l.n || l.name || '').toLowerCase()
+        const ctx = (l.c || []).join(' ').toLowerCase()
+        let sc = 0
+        if (name === ql) sc = 200
+        else if (name.startsWith(ql)) sc = 120
+        else if (ctx === ql) sc = 100
+        else if (name.includes(ql)) sc = 60
+        else if (ctx.includes(ql)) sc = 30
+        return sc
+      }
+      for (const l of searchIndex.localities || []) {
+        const sc = scoreLocality(l)
+        if (sc <= 0) continue
+        if (seen.has('l:' + l.s)) continue
+        seen.add('l:' + l.s)
+        results.push({ type: 'locality', slug: l.s, name: l.n || l.name, qualifier: l.qualifier || null, ctx: l.c, score: sc })
+        if (results.length >= limit * 2) break
+      }
+      function scoreStop(st) {
+        const label = String(st.l || st.label || '').toLowerCase()
+        const ctx = (st.c || []).join(' ').toLowerCase()
+        const loc = String(st.loc || '').toLowerCase()
+        const tokens = words
+        let sc = 0
+        if (tokens.every((w) => label.includes(w) || ctx.includes(w))) {
+          if (label === ql) sc = 180
+          else if (label.includes(ql)) sc = 150
+          else sc = 80
+        } else {
+          return 0
+        }
+        return sc
+      }
+      for (const st of searchIndex.stops || []) {
+        const sc = scoreStop(st)
+        if (sc <= 0) continue
+        const key = 's:' + st.a + ':' + (st.slug || '')
+        if (seen.has(key)) continue
+        seen.add(key)
+        results.push({
+          type: 'stop',
+          atco: st.a,
+          label: st.l || st.label,
+          name: st.l || st.label,
+          slug: st.slug,
+          ctx: st.c,
+          loc: st.loc,
+          score: sc,
+        })
+      }
+      results.sort((a, b) => b.score - a.score)
+      return json(res, 200, { results: results.slice(0, limit), query: q })
+    } catch (err) {
+      return json(res, 502, { error: String(err && err.message || err) })
+    }
+  }
+
   if (url.pathname === '/api/search') {
     const q = (url.searchParams.get('q') || '').trim()
     if (!q) return badRequest(res, 'missing q')
@@ -172,7 +275,11 @@ const server = http.createServer(async (req, res) => {
       const { __parsed } = await upstreamCached(
         key, parseServiceStops, () => `/services/${encodeURIComponent(slug)}`, TTL.serviceStops
       )
-      return json(res, 200, { slug, ...__parsed })
+      const directions = (__parsed?.directions || []).map((d) => ({
+        ...d,
+        stops: (d.stops || []).map((s) => ({ ...s, locality: stopLocality.get(s.atco) || null })),
+      }))
+      return json(res, 200, { slug, ...__parsed, directions })
     } catch (err) {
       return json(res, 502, { error: String(err && err.message || err) })
     }

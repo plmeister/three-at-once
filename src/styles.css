@@ -731,6 +731,30 @@ li.dest .rs-tag { background: var(--green); }
   overflow-wrap: anywhere;
 }
 
+.rs-stops > li.rs-fold {
+  display: block;
+  padding: 2px 4px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.rs-fold > details > summary {
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--line) 22%, transparent);
+}
+.rs-fold > details > summary::marker { color: var(--muted); }
+.rs-nested {
+  padding: 2px 0 4px 12px;
+  overflow: visible;
+  flex: none;
+}
+.rs-nested > li { grid-template-columns: 22px minmax(0, 1fr); }
+
 .rs-foot, .rs-empty {
   margin: 0;
   padding: 8px 12px 10px;
