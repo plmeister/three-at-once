@@ -1,6 +1,6 @@
 import { registerSW } from 'virtual:pwa-register'
 import { getState, setOrigin, setToStop, setDestination, setOperator, clearOrigin, getFavourites, removeFavourite, getFavJourneys, removeFavJourney, sharedStateFromUrl } from './store.js'
-import { bootBoard } from './board.js'
+import { bootBoard, setReplaceOriginHandler } from './board.js'
 import { openSearch, initSearch, closeSearch } from './search.js'
 
 registerSW({
@@ -28,6 +28,14 @@ function renderHeader() {
     originBtn.textContent = 'Choose your stop'
   }
 }
+
+setReplaceOriginHandler(() => {
+  openSearch((stop) => {
+    setOrigin(stop)
+    closeSearch()
+    boot()
+  })
+})
 
 function boot() {
   let { origin } = getState()

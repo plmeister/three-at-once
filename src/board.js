@@ -2,7 +2,7 @@ import { MAX_DEPARTURES, REFRESH_MS, STALE_MS } from './config.js'
 import { stopDepartures, stopServices } from './api.js'
 import {
   getState, setOrigin, setDestination, setToStop, setOperator, clearOrigin,
-  buildShareUrl, addFavourite, removeFavourite, isFavourite,
+  buildShareUrl, addFavourite, removeFavourite, isFavourite, toggleFavourite,
   getFavJourneys, isFavJourney, saveFavouriteJourney, removeFavJourney, journeyKey,
 } from './store.js'
 import { stopDirProfile, legVerdict, DIR } from './routes.js'
@@ -21,6 +21,9 @@ let toAtcos = [] // every atco behind the destination — a merged group contrib
 let toArrivals = null // Map<tripUrl, departure> at the destination stop
 let toDir = null // stopDirProfile of the destination stop's own departures
 let openToSearchFn = null // lets the destination chip reopen the picker
+let replaceOriginFn = null // set by main.js so the origin panel can reopen the picker
+
+export function setReplaceOriginHandler(fn) { replaceOriginFn = fn }
 let fareOps = new Set() // operator names serving the board (origin + via destination)
 let lineFilter = null // { slug, line } — narrows the board to one service
 let originServices = [] // every service calling at the origin stop
@@ -107,6 +110,7 @@ export function bootBoard(app, origin) {
   const setDestBtn = el.querySelector('#btn-set-to')
   if (setDestBtn && boardTo) setDestBtn.style.display = 'none'
   else if (setDestBtn) setDestBtn.style.display = 'inline-flex'
+  ensureOriginServices().catch(() => {})
 
 
   const list = el.querySelector('#dep-list')
@@ -115,7 +119,6 @@ export function bootBoard(app, origin) {
   const opSelect = el.querySelector('#op-select')
   const refresh = el.querySelector('#btn-refresh')
   const share = el.querySelector('#btn-share')
-  const fav = el.querySelector('#btn-fav')
   const jfav = el.querySelector('#btn-jfav')
   const swap = el.querySelector('#btn-swap')
   const clear = el.querySelector('#btn-clear')
@@ -180,18 +183,6 @@ export function bootBoard(app, origin) {
   opSelect.addEventListener('change', () => {
     setOperator(opSelect.value)
     renderRows()
-  })
-
-  function updateFav() {
-    const on = isFavourite(origin)
-    fav.textContent = on ? '★' : '☆'
-    fav.title = on ? 'Remove bookmark' : 'Bookmark this stop'
-  }
-  updateFav()
-fav.addEventListener('click', () => {
-    if (isFavourite(origin)) removeFavourite(origin)
-    else addFavourite(origin)
-    updateFav()
   })
 
   function updateJFav() {
@@ -842,6 +833,19 @@ function escapeHtml(s) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
 }
+function routeNums(lines) {
+  const set = new Set()
+  for (const l of lines || []) {
+    const v = (l || '').trim()
+    if (v) set.add(v)
+  }
+  return [...set].sort((a, b) => a.localeCompare(b, 'en-GB', { numeric: true }))
+}
+
+function routeNumStr(lines) {
+  return routeNums(lines).join(' ')
+}
+
 function renderStopPanel(containerId, stopInfo) {
   const container = document.getElementById(containerId)
   if (!container || !stopInfo) return
@@ -850,59 +854,65 @@ function renderStopPanel(containerId, stopInfo) {
   const count = isGroup ? (stopInfo.stops?.length || 0) : 0
   const fav = isFavourite(stopInfo)
   const members = isGroup ? (stopInfo.stops || []) : [stopInfo]
-  let services = ((containerId === 'origin-panel' && originServices) ? originServices : (stopInfo.services || [])).slice()
-  if (services.length === 0 && !isGroup && stopInfo.atco && containerId === 'origin-panel') {
-    // will be filled by ensureOriginServices; keep empty for now
-  } else if (services.length === 0 && !isGroup && stopInfo.atco && containerId === 'dest-panel') {
-    // fetch on demand
-    cachedStopServices(stopInfo.atco).then((svcs) => {
-      if (svcs.length) {
-        stopInfo.services = svcs
-        renderStopPanel(containerId, stopInfo)
-      }
-    }).catch(() => {})
+
+  let lines = []
+  if (isGroup) {
+    lines = members.flatMap((m) => m.lines || [])
+  } else if (containerId === 'origin-panel') {
+    lines = (originServices || []).map((svc) => svc.line)
+    if (!lines.length && stopInfo.atco) {
+      cachedStopServices(stopInfo.atco).then((svcs) => {
+        if (svcs.length) {
+          originServices = svcs
+          renderStopPanel(containerId, stopInfo)
+        }
+      }).catch(() => {})
+    }
+  } else {
+    lines = stopInfo.lines || (stopInfo.services || []).map((svc) => svc.line)
+    if (!lines.length && stopInfo.atco) {
+      cachedStopServices(stopInfo.atco).then((svcs) => {
+        if (svcs.length) {
+          stopInfo.lines = svcs.map((svc) => svc.line)
+          stopInfo.services = svcs
+          renderStopPanel(containerId, stopInfo)
+        }
+      }).catch(() => {})
+    }
   }
-  services = services.sort(lineSort)
+
   let html = '<div class="stop-panel large">'
   html += '<div class="stop-panel-head">'
   html += '<button class="fav-toggle large" data-fav-panel="' + escapeHtml(containerId) + '" type="button" title="Favourite">' + (fav ? '★' : '☆') + '</button>'
   html += '<div class="stop-panel-title">'
   html += '<span class="stop-panel-icon">' + (isGroup ? '🏛' : '🚏') + '</span>'
   html += '<span class="stop-panel-name">' + escapeHtml(label) + '</span>'
-  if (count) html += '<span class="chip">' + count + ' stops</span>'
   html += '<button class="icon-btn small" data-replace="' + escapeHtml(containerId) + '" type="button" title="Replace stop">🔍</button>'
   html += '</div></div>'
   html += '<div class="stop-panel-body">'
-  if (members.length > 1) {
-    html += '<div class="members-section"><div class="section-label">Stops in this group</div>'
+
+  if (isGroup) {
+    html += '<details class="group-members"><summary>' + count + ' stops</summary>'
+    html += '<div class="member-list">'
     for (let i = 0; i < members.length; i++) {
       const m = members[i]
       const mf = isFavourite(m)
+      const nums = routeNumStr(m.lines)
       html += '<div class="member-row">'
-      html += '<span class="member-name">🚏 ' + escapeHtml(m.label) + '</span>'
-      if (m.atco) html += '<code>' + escapeHtml(m.atco) + '</code>'
       html += '<button class="fav-toggle small" data-fav-mem="' + i + '" type="button">' + (mf ? '★' : '☆') + '</button>'
+      html += '<span class="member-name">' + escapeHtml(m.label) + '</span>'
+      html += '<span class="member-routes">' + escapeHtml(nums) + '</span>'
       html += '</div>'
     }
-    html += '</div>'
-  }
-  html += '<div class="services-section"><div class="section-label">' + services.length + ' route' + (services.length === 1 ? '' : 's') + ' calling here</div>'
-  if (services.length) {
-    html += '<div class="svc-grid">'
-    for (const svc of services) {
-      const next = nextTimeFor(svc.slug, svc.line)
-      html += '<div class="svc-item">'
-      html += '<button class="svc-chip' + (next ? '' : ' quiet') + '" type="button" data-svc="' + escapeHtml(svc.slug) + '" data-line="' + escapeHtml(svc.line || '') + '">'
-      html += '<b>' + escapeHtml(svc.line || '?') + '</b> <span>' + escapeHtml(svc.headline || svc.destination || '') + '</span>'
-      if (next) html += '<small>' + escapeHtml(next) + '</small>'
-      html += '</button>'
-      html += '</div>'
-    }
-    html += '</div>'
+    html += '</div></details>'
+    const nums = routeNumStr(lines)
+    if (nums) html += '<div class="route-nums">' + escapeHtml(nums) + '</div>'
   } else {
-    html += '<p class="muted">No routes call here</p>'
+    const nums = routeNumStr(lines)
+    html += '<div class="route-nums">' + (nums ? escapeHtml(nums) : '<span class="muted">…</span>') + '</div>'
   }
-  html += '</div></div></div>'
+
+  html += '</div></div>'
   container.innerHTML = html
   container.querySelector('[data-fav-panel]')?.addEventListener('click', (e) => { e.stopPropagation(); toggleFavourite(stopInfo); renderStopPanel(containerId, stopInfo) })
   container.querySelectorAll('[data-fav-mem]').forEach((btn) => {
@@ -916,11 +926,11 @@ function renderStopPanel(containerId, stopInfo) {
   container.querySelector('[data-replace]')?.addEventListener('click', (e) => {
     e.stopPropagation()
     if (containerId === 'origin-panel') {
-      if (typeof openOriginSearch === 'function') openOriginSearch()
-      else if (typeof openSearch === 'function') openSearch((s) => { /* handled by main */ }, 'origin')
+      if (replaceOriginFn) replaceOriginFn()
+      else openSearch(() => {}, 'origin')
     } else if (containerId === 'dest-panel') {
-      if (typeof openToSearchFn === 'function') openToSearchFn()
-      else if (typeof openSearch === 'function') openSearch((s) => { applyToStop(s) }, 'to')
+      if (openToSearchFn) openToSearchFn()
+      else openSearch((s) => { applyToStop(s) }, 'to')
     }
   })
 }
