@@ -120,8 +120,6 @@ export function bootBoard(app, origin) {
   const swap = el.querySelector('#btn-swap')
   const clear = el.querySelector('#btn-clear')
   const toRow = el.querySelector('#to-row')
-  const svcToggle = el.querySelector('#svc-toggle')
-  const svcList = el.querySelector('#svc-list')
   const lineFilterEl = el.querySelector('#line-filter')
 
   // Route numbers are delegated: rows are re-rendered wholesale on every poll,
@@ -148,19 +146,6 @@ export function bootBoard(app, origin) {
     if (routeBtn(e.target)) blurRoute()
   })
 
-  svcToggle.addEventListener('click', async () => {
-    svcOpen = svcToggle.getAttribute('aria-expanded') !== 'true'
-    if (svcOpen && !originServices.length) {
-      renderSvcPanel()
-      await ensureOriginServices()
-    }
-    renderSvcPanel()
-  })
-
-  svcList.addEventListener('click', (e) => {
-    const chip = e.target.closest('[data-svc]')
-    if (chip) setLineFilter(chip.dataset.svc)
-  })
 
   lineFilterEl.addEventListener('click', (e) => {
     const go = e.target.closest('[data-route]')
@@ -903,7 +888,7 @@ function renderStopPanel(containerId, stopInfo) {
     }
     html += '</div>'
   } else {
-    html += '<p class="muted">Loading routes…</p>'
+    html += '<p class="muted">No routes call here</p>'
   }
   html += '</div></div></div>'
   container.innerHTML = html
