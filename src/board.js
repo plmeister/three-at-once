@@ -905,8 +905,6 @@ function renderStopPanel(containerId, stopInfo) {
       html += '</div>'
     }
     html += '</div></details>'
-    const nums = routeNumStr(lines)
-    if (nums) html += '<div class="route-nums">' + escapeHtml(nums) + '</div>'
   } else {
     const nums = routeNumStr(lines)
     html += '<div class="route-nums">' + (nums ? escapeHtml(nums) : '<span class="muted">…</span>') + '</div>'
