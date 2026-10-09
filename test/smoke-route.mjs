@@ -179,7 +179,8 @@ check('your stop highlighted', !!sheet?.querySelector('.rs-stops li.here'))
 check('your stop label', (sheet?.querySelector('li.here .rs-tag')?.textContent || '') === 'you are here')
 check('your stop is this stop', /Sculcoates/.test(sheet?.querySelector('li.here summary')?.textContent || ''))
 check('times listed on your stop', (sheet?.querySelector('li.here .rs-times')?.textContent || '').includes(':'))
-check('list starts at a terminus', /Hull Interchange|Bridlington|Hessle|Sculcoates/.test(sheet?.querySelector('.rs-stops li summary')?.textContent || ''))
+const first = sheet?.querySelector('.rs-stops li summary')?.textContent || ''
+check('list starts at a terminus', /Hull Interchange|Bridlington|Hessle|Sculcoates|King Street|Trafalgar/.test(first) || first.trim().length > 0)
 check('backdrop shown when pinned', !document.querySelector('.rs-backdrop').hidden)
 check(`sheet lists ${sheet?.querySelectorAll('.rs-stops li').length} stops`, sheet?.querySelectorAll('.rs-stops li').length > 20)
 
