@@ -1,10 +1,8 @@
 // Route detail: the stops a service calls at, in running order.
 //
-// One renderer, two presentations. Where the pointer can hover (desktop) the
-// sheet appears beside the route number on hover/focus and dismisses itself;
-// on touch there is no hover, so a tap opens it as a bottom sheet pinned until
-// dismissed. Data is fetched on first open only — a service page is ~90KB of
-// timetable, so it is never speculated ahead of a real gesture.
+// Clicking a route number opens the sheet and pins it until dismissed (via the
+// backdrop or the close button). Data is fetched on first open only — a service
+// page is ~90KB of timetable, so it is never speculated ahead of a real gesture.
 
 import { serviceStops } from './api.js'
 import { UPSTREAM_URL } from './config.js'

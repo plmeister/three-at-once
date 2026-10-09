@@ -7,7 +7,7 @@ import {
 } from './store.js'
 import { stopDirProfile, legVerdict, DIR } from './routes.js'
 import { openSearch } from './search.js'
-import { hoverRoute, leaveRoute, tapRoute, focusRoute, blurRoute } from './route-sheet.js'
+import { tapRoute } from './route-sheet.js'
 
 let lastLoadedAt = 0
 let timer = null
@@ -131,22 +131,6 @@ export function bootBoard(app, origin) {
   list.addEventListener('click', (e) => {
     const btn = routeBtn(e.target)
     if (btn) tapRoute(btn, routeOpts(btn))
-  })
-  list.addEventListener('pointerover', (e) => {
-    if (e.pointerType !== 'mouse') return
-    const btn = routeBtn(e.target)
-    if (btn) hoverRoute(btn, routeOpts(btn))
-  })
-  list.addEventListener('pointerout', (e) => {
-    if (e.pointerType !== 'mouse') return
-    if (routeBtn(e.target)) leaveRoute()
-  })
-  list.addEventListener('focusin', (e) => {
-    const btn = routeBtn(e.target)
-    if (btn) focusRoute(btn, routeOpts(btn))
-  })
-  list.addEventListener('focusout', (e) => {
-    if (routeBtn(e.target)) blurRoute()
   })
 
 
@@ -410,7 +394,10 @@ async function ensureOriginServices() {
     merged.set(svc.slug, svc)
   }
   originServices = [...merged.values()]
-  if (typeof renderStopPanel === 'function') renderStopPanel('origin-panel', boardOrigin)
+  if (typeof renderStopPanel === 'function') {
+    renderStopPanel('origin-panel', boardOrigin)
+    renderStopPanel('dest-panel', boardTo)
+  }
 
   return originServices
 }
@@ -568,7 +555,14 @@ function applyToStop(stop) {
   if (setDestBtn) setDestBtn.style.display = boardTo ? 'none' : 'inline-flex'
 
   if (!stop) return
-  loadToServices().then(() => { renderRows(); refreshFareOps() })
+  loadToServices().then(() => {
+    renderRows()
+    refreshFareOps()
+    if (typeof renderStopPanel === 'function') {
+      renderStopPanel('origin-panel', boardOrigin)
+      renderStopPanel('dest-panel', boardTo)
+    }
+  })
   loadToArrivals().then(renderRows)
 }
 
@@ -842,8 +836,44 @@ function routeNums(lines) {
   return [...set].sort((a, b) => a.localeCompare(b, 'en-GB', { numeric: true }))
 }
 
-function routeNumStr(lines) {
-  return routeNums(lines).join(' ')
+function servicesByLine(services) {
+  const map = new Map()
+  for (const s of services || []) if (s?.line && !map.has(s.line)) map.set(s.line, s)
+  return map
+}
+
+// Route numbers that call at both this stop and the other end of the journey.
+// Matched by slug where a service is known, else by number.
+function sharedRoutes(services, otherServices) {
+  const otherSlugs = new Set((otherServices || []).map((s) => s.slug).filter(Boolean))
+  const otherLines = new Set((otherServices || []).map((s) => s.line).filter(Boolean))
+  const byLine = servicesByLine(services)
+  const set = new Set()
+  for (const n of routeNums((services || []).map((s) => s.line))) {
+    const svc = byLine.get(n)
+    if (svc?.slug) {
+      if (otherSlugs.has(svc.slug)) set.add(n)
+    } else if (otherLines.has(n)) {
+      set.add(n)
+    }
+  }
+  return set
+}
+
+function routeNumsHTML(lines, services, through, dim) {
+  const nums = routeNums(lines)
+  if (!nums.length) return '<span class="muted">…</span>'
+  const byLine = servicesByLine(services)
+  return nums
+    .map((n) => {
+      const svc = byLine.get(n)
+      const throughCls = through && through.has(n) ? ' through' : (dim ? ' not-through' : '')
+      const data = svc?.slug
+        ? ' data-route="' + escapeHtml(svc.slug) + '"'
+        : ' data-line="' + escapeHtml(n) + '"'
+      return '<button type="button" class="route-num' + throughCls + '"' + data + '>' + escapeHtml(n) + '</button>'
+    })
+    .join('')
 }
 
 function renderStopPanel(containerId, stopInfo) {
@@ -855,10 +885,20 @@ function renderStopPanel(containerId, stopInfo) {
   const fav = isFavourite(stopInfo)
   const members = isGroup ? (stopInfo.stops || []) : [stopInfo]
 
+  const isOrigin = containerId === 'origin-panel'
+  const panelServices = isOrigin
+    ? (originServices || [])
+    : (toInfo?.services || stopInfo.services || [])
+  const otherServices = isOrigin
+    ? (toInfo?.services || [])
+    : (originServices || [])
+  const through = sharedRoutes(panelServices, otherServices)
+  const dim = otherServices.length > 0
+
   let lines = []
   if (isGroup) {
     lines = members.flatMap((m) => m.lines || [])
-  } else if (containerId === 'origin-panel') {
+  } else if (isOrigin) {
     lines = (originServices || []).map((svc) => svc.line)
     if (!lines.length && stopInfo.atco) {
       cachedStopServices(stopInfo.atco).then((svcs) => {
@@ -897,17 +937,16 @@ function renderStopPanel(containerId, stopInfo) {
     for (let i = 0; i < members.length; i++) {
       const m = members[i]
       const mf = isFavourite(m)
-      const nums = routeNumStr(m.lines)
+      const nums = routeNumsHTML(m.lines, panelServices, through, dim)
       html += '<div class="member-row">'
       html += '<button class="fav-toggle small" data-fav-mem="' + i + '" type="button">' + (mf ? '★' : '☆') + '</button>'
       html += '<span class="member-name">' + escapeHtml(m.label) + '</span>'
-      html += '<span class="member-routes">' + escapeHtml(nums) + '</span>'
+      html += '<span class="member-routes">' + nums + '</span>'
       html += '</div>'
     }
     html += '</div></details>'
   } else {
-    const nums = routeNumStr(lines)
-    html += '<div class="route-nums">' + (nums ? escapeHtml(nums) : '<span class="muted">…</span>') + '</div>'
+    html += '<div class="route-nums">' + routeNumsHTML(lines, panelServices, through, dim) + '</div>'
   }
 
   html += '</div></div>'
@@ -930,5 +969,12 @@ function renderStopPanel(containerId, stopInfo) {
       if (openToSearchFn) openToSearchFn()
       else openSearch((s) => { applyToStop(s) }, 'to')
     }
+  })
+  container.querySelectorAll('[data-route]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation()
+      const svc = panelServices.find((s) => s.slug === btn.dataset.route) || serviceBySlug(btn.dataset.route)
+      tapRoute(btn, routeOpts(btn, svc))
+    })
   })
 }

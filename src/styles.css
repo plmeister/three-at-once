@@ -466,9 +466,6 @@ body {
   color: var(--bg);
   outline: none;
 }
-@media (hover: hover) {
-  .row .line .line-btn { cursor: help; }
-}
 
 /* "N services call here" — the full list, not just the next 24h of departures */
 .svc-panel { margin: 0 0 12px; }
@@ -1028,13 +1025,36 @@ li.dest .rs-tag { background: var(--green); }
 .stop-panel-body { margin-top: 8px; }
 
 .route-nums {
-  font-family: var(--mono);
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  color: var(--amber-soft);
-  word-spacing: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
 }
+.route-num {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  color: var(--amber-soft);
+  background: color-mix(in srgb, var(--amber) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--amber) 40%, transparent);
+  border-radius: 6px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.route-num:hover { background: color-mix(in srgb, var(--amber) 26%, transparent); }
+.route-num.through {
+  color: var(--bg);
+  background: var(--amber);
+  border-color: var(--amber);
+}
+.route-num.not-through {
+  color: var(--muted);
+  background: transparent;
+  border-color: var(--line);
+  border-style: dashed;
+  font-weight: 600;
+}
+.route-num.not-through:hover { color: var(--text); border-color: var(--muted); }
 
 .group-members { margin-bottom: 8px; }
 .group-members > summary {
@@ -1064,12 +1084,12 @@ li.dest .rs-tag { background: var(--green); }
 .member-name { flex: 0 1 auto; }
 .member-routes {
   margin-left: auto;
-  font-family: var(--mono);
-  font-weight: 700;
-  color: var(--amber-soft);
-  font-size: 12px;
-  text-align: right;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
 }
+.member-routes .route-num { font-size: 11px; padding: 1px 6px; }
 
 .board-main { flex: 1; min-width: 0; }
 .dest-section { margin: 8px 0 4px; }
