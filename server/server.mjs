@@ -186,15 +186,20 @@ const server = http.createServer(async (req, res) => {
       function scoreStop(st) {
         const label = String(st.l || st.label || '').toLowerCase()
         const ctx = (st.c || []).join(' ').toLowerCase()
-        const loc = String(st.loc || '').toLowerCase()
+        const loc = String(st.c?.[0] || '').toLowerCase()
         const tokens = words
-        let sc = 0
-        if (tokens.every((w) => label.includes(w) || ctx.includes(w))) {
-          if (label === ql) sc = 180
-          else if (label.includes(ql)) sc = 150
-          else sc = 80
-        } else {
-          return 0
+        if (!tokens.every((w) => label.includes(w) || ctx.includes(w))) return 0
+        if (tokens.every((w) => label.includes(w))) {
+          return label === ql ? 180 : 150
+        }
+        // A word that names the stop's own locality ("York") but is absent from
+        // its label ("Rail Station") is strong evidence the user means this place,
+        // not a same-word street elsewhere ("Burstwick Station Road"). Match on
+        // word boundaries so "york" doesn't fire on "E Yorks".
+        let sc = 80
+        for (const w of tokens) {
+          if (w.length < 3 || label.includes(w)) continue
+          if (new RegExp(`\\b${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(loc)) sc += 20
         }
         return sc
       }

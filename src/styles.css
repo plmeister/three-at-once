@@ -959,6 +959,27 @@ li.dest .rs-tag { background: var(--green); }
 .r-mine.none { color: var(--muted); font-weight: 400; text-decoration: underline dotted; }
 .r-cta { color: var(--muted); font-size: 18px; }
 
+.r-crumb {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+  margin-top: 3px;
+}
+.r-main .crumb {
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.2;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--line) 30%, transparent);
+  border: 0;
+  border-radius: 5px;
+  padding: 1px 6px;
+  cursor: pointer;
+}
+.r-main .crumb:hover { color: var(--amber); background: color-mix(in srgb, var(--amber) 16%, transparent); }
+.crumb-sep { color: var(--muted); font-size: 10px; opacity: 0.6; }
+
 .empty { list-style: none; }
 
 @media (max-width: 560px) {

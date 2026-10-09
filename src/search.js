@@ -114,14 +114,7 @@ async function search() {
      hint().textContent = `Searching “${q}”…`
      try {
        const res = await searchAll(q, 40)
-       const items = []
-       for (const r of res) {
-         if (r.type === 'locality') {
-           items.push({ type: 'locality', slug: r.slug, name: r.name, qualifier: r.qualifier, ctx: r.ctx })
-         } else if (r.type === 'stop') {
-           items.push({ type: 'stop', atco: r.atco, label: r.label || r.name, name: r.label || r.name, slug: r.slug, ctx: r.ctx, lines: [] })
-         }
-       }
+       const items = groupSearchResults(res)
        allSlate = items
        slate = items
        renderList()
@@ -286,6 +279,74 @@ function groupStops(stops) {
   return out
 }
 
+// Search hits arrive as a flat ranked list of stops + localities. Collapse stops
+// that share a stem ("Rail Station (Stop RA) ↑" …) into one group card, keeping
+// the best-ranked member's position, so searching "york station" surfaces the
+// group rather than ten anonymous stop rows. Localities pass through untouched.
+function groupSearchResults(res) {
+  const out = []
+  for (const [i, r] of (res || []).entries()) {
+    if (r.type === 'locality') {
+      out.push({ order: i, item: { type: 'locality', slug: r.slug, name: r.name, qualifier: r.qualifier, ctx: r.ctx } })
+    }
+  }
+  const groups = new Map()
+  const singles = []
+  for (const [i, r] of (res || []).entries()) {
+    if (r.type !== 'stop') continue
+    const item = {
+      type: 'stop',
+      atco: r.atco,
+      label: r.label || r.name,
+      name: r.label || r.name,
+      slug: r.slug,
+      ctx: r.ctx,
+      lines: [],
+    }
+    const stem = stemOfLabel(item.label)
+    if (stem) {
+      if (!groups.has(stem)) groups.set(stem, { order: i, members: [] })
+      groups.get(stem).members.push(item)
+    } else {
+      singles.push({ order: i, item })
+    }
+  }
+  for (const [, g] of groups) {
+    if (g.members.length >= 2) out.push({ order: g.order, item: searchGroupCard(g.members) })
+    else out.push({ order: g.order, item: g.members[0] })
+  }
+  out.push(...singles)
+  out.sort((a, b) => a.order - b.order)
+  return out.map((x) => x.item)
+}
+
+function searchGroupCard(members) {
+  return {
+    type: 'group',
+    kind: 'group',
+    label: groupLabel(members[0].label),
+    stops: members.map((m) => ({ atco: m.atco, label: m.label, lines: m.lines || [] })),
+    lines: [...new Set(members.flatMap((m) => m.lines || []))],
+    ctx: members[0].ctx,
+    slug: members[0].slug,
+  }
+}
+
+function crumbsHTML(ctx, firstSlug) {
+  const names = [...new Set((ctx || []).map((c) => String(c ?? '').trim()).filter(Boolean))]
+  if (!names.length) return ''
+  return (
+    '<small class="r-crumb">' +
+    names
+      .map((n, i) => {
+        const slug = i === 0 && firstSlug ? ` data-slug="${escapeHtml(firstSlug)}"` : ''
+        return `<button type="button" class="crumb" data-crumb="${escapeHtml(n)}"${slug}>${escapeHtml(n)}</button>`
+      })
+      .join('<span class="crumb-sep">›</span>') +
+    '</small>'
+  )
+}
+
 function renderList() {
   results().replaceChildren()
   if (!slate.length) return
@@ -301,21 +362,45 @@ function renderList() {
     } else if (item.type === 'group') {
       li.className = 'result group-result'
       const uniqLines = [...new Set(item.lines || [])].join(' · ')
-      li.innerHTML = `<span class="r-icon">🏛</span><span class="r-main">${escapeHtml(item.label)}<small class="r-lines">${item.stops.length} stops${uniqLines ? ` · ${escapeHtml(uniqLines)}` : ''}</small></span><span class="r-cta">▸</span>`
-      li.addEventListener('click', () => onPick?.(item))
+      li.innerHTML = `<span class="r-icon">🏛</span><span class="r-main">${escapeHtml(item.label)}${crumbsHTML(item.ctx, item.slug)}<small class="r-lines">${item.stops.length} stops${uniqLines ? ` · ${escapeHtml(uniqLines)}` : ''}</small></span><span class="r-cta">▸</span>`
+      li.addEventListener('click', (e) => { if (e.target.closest('.crumb')) return; onPick?.(item) })
     } else if (item.type === 'locality') {
       li.innerHTML = `<span class="r-icon">⌖</span><span class="r-main">${escapeHtml(item.name)}${item.qualifier ? ` <small>${escapeHtml(item.qualifier)}</small>` : ''}</span><span class="r-cta">›</span>`
       li.addEventListener('click', () => openLocality(item))
     } else {
       li.className = 'result stop-result'
       if (item.atco) li.dataset.atco = item.atco
-      li.innerHTML = `<span class="r-icon">🚏</span><span class="r-main">${escapeHtml(item.label)}${item.lines?.length ? `<small class="r-lines">${item.lines.map(escapeHtml).join(' · ')}</small>` : ''}</span><span class="r-cta">＋</span>`
-      li.addEventListener('click', () => onPick?.(item))
+      li.innerHTML = `<span class="r-icon">🚏</span><span class="r-main">${escapeHtml(item.label)}${item.lines?.length ? `<small class="r-lines">${item.lines.map(escapeHtml).join(' · ')}</small>` : ''}${crumbsHTML(item.ctx, item.slug)}</span><span class="r-cta">＋</span>`
+      li.addEventListener('click', (e) => {
+        if (e.target.closest('.crumb')) return
+        onPick?.(item)
+      })
     }
     frag.appendChild(li)
   }
   results().appendChild(frag)
   stampDirs()
+}
+
+async function openLocalityByName(name, slug) {
+  const place = String(name ?? '').trim()
+  if (!place) return
+  if (slug) {
+    openLocality({ slug, name: place })
+    return
+  }
+  try {
+    const { localities = [] } = await searchLocalities(name)
+    const loc = localities.find((l) => l.name?.toLowerCase() === name.toLowerCase()) || localities[0]
+    if (loc) {
+      openLocality(loc)
+      return
+    }
+  } catch {
+    /* fall through to a plain search */
+  }
+  input().value = name
+  search()
 }
 
 async function openLocality(loc) {
@@ -356,6 +441,13 @@ export function initSearch() {
   const d = dialog()
   input().addEventListener('input', search)
   document.getElementById('search-close').addEventListener('click', closeSearch)
+  results().addEventListener('click', (e) => {
+    const crumb = e.target.closest?.('.crumb')
+    if (crumb) {
+      e.stopPropagation()
+      openLocalityByName(crumb.dataset.crumb, crumb.dataset.slug)
+    }
+  })
   back().addEventListener('click', () => {
     input().value = ''
     browsing = null
