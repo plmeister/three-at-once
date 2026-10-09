@@ -11,6 +11,7 @@ const defaultState = {
   operator: '',
   favourites: [],
   favJourneys: [],
+  groups: [],
 }
 
 export function validOrigin(o) {
@@ -19,6 +20,16 @@ export function validOrigin(o) {
     return typeof o.label === 'string' && o.label && Array.isArray(o.stops) && o.stops.length > 0
   }
   return typeof o.atco === 'string' && o.atco && o.label
+}
+
+function validMember(m) {
+  if (!m || typeof m !== 'object') return false
+  if (m.kind === 'group') return typeof m.label === 'string' && !!m.label && Array.isArray(m.stops) && m.stops.length > 0
+  return typeof m.atco === 'string' && !!m.atco && typeof m.label === 'string' && !!m.label
+}
+
+export function validGroup(g) {
+  return !!g && typeof g.name === 'string' && g.name.trim() && Array.isArray(g.members) && g.members.some(validMember)
 }
 
 function load() {
@@ -36,6 +47,7 @@ function load() {
       favJourneys: Array.isArray(raw.favJourneys)
         ? raw.favJourneys.filter((f) => f && typeof f.name === 'string' && f.name && validOrigin(f.origin) && validOrigin(f.toStop))
         : [],
+      groups: Array.isArray(raw.groups) ? raw.groups.filter(validGroup) : [],
     }
   } catch {
     return defaultState
@@ -224,4 +236,120 @@ export function toggleFavourite(o) {
     state.favourites.push(o)
   }
   persist()
+}
+
+// ---- custom groups ("Home" = a handful of nearby stops) --------------------
+
+function newGroupId() {
+  return 'g_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+}
+
+export function getGroups() {
+  return state.groups
+}
+
+export function getGroup(id) {
+  return state.groups.find((g) => g.id === id) || null
+}
+
+// Flatten members (stops and nested bus groups) into the board's group shape.
+// De-duplicated by atco so the same bay added via two routes counts once.
+export function resolveGroup(g) {
+  if (!g) return null
+  const stops = []
+  const seen = new Set()
+  const push = (s) => {
+    if (!s?.atco || seen.has(s.atco)) return
+    seen.add(s.atco)
+    stops.push({ atco: s.atco, label: s.label || s.atco, lines: s.lines || [] })
+  }
+  for (const m of g.members || []) {
+    if (m.kind === 'group') for (const s of m.stops || []) push(s)
+    else push(m)
+  }
+  return {
+    kind: 'group',
+    custom: true,
+    id: g.id,
+    label: g.name,
+    stops,
+    lines: [...new Set(stops.flatMap((s) => s.lines || []))],
+  }
+}
+
+export function saveGroup(g) {
+  const members = (g?.members || []).filter(validMember)
+  const name = String(g?.name || '').trim()
+  if (!name || !members.length) return null
+  const id = g.id || newGroupId()
+  const next = { id, name, members }
+  const idx = state.groups.findIndex((x) => x.id === id)
+  const groups = state.groups.slice()
+  if (idx >= 0) groups[idx] = next
+  else groups.push(next)
+  state = { ...state, groups }
+  persist()
+  return next
+}
+
+export function removeGroup(id) {
+  state = { ...state, groups: state.groups.filter((g) => g.id !== id) }
+  persist()
+}
+
+// ---- backup / sync --------------------------------------------------------
+
+export function exportData() {
+  return {
+    app: 'whichbus',
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    origin: state.origin || null,
+    toStop: state.toStop || null,
+    favourites: state.favourites,
+    favJourneys: state.favJourneys,
+    groups: state.groups,
+  }
+}
+
+function validJourney(j) {
+  return j && typeof j.name === 'string' && j.name && validOrigin(j.origin) && validOrigin(j.toStop)
+}
+
+function unionBy(existing, incoming, keyOf) {
+  const out = existing.slice()
+  const seen = new Set(existing.map(keyOf))
+  for (const item of incoming) {
+    const k = keyOf(item)
+    if (k == null || seen.has(k)) continue
+    seen.add(k)
+    out.push(item)
+  }
+  return out
+}
+
+// Merge (default) keeps local entries and adds anything new; replace swaps the
+// whole set. Either way only structurally valid entries survive.
+export function importData(data, { merge = true } = {}) {
+  if (!data || typeof data !== 'object') throw new Error('Not a Which Bus backup file')
+  const favourites = Array.isArray(data.favourites) ? data.favourites.filter(validOrigin) : []
+  const favJourneys = Array.isArray(data.favJourneys) ? data.favJourneys.filter(validJourney) : []
+  const groups = Array.isArray(data.groups) ? data.groups.filter(validGroup) : []
+  const groupKey = (g) => String(g.name || '').trim().toLowerCase()
+  if (merge) {
+    state = {
+      ...state,
+      favourites: unionBy(state.favourites, favourites, favKey),
+      favJourneys: unionBy(state.favJourneys, favJourneys, (j) => journeyKey(j.origin, j.toStop)),
+      groups: unionBy(state.groups, groups, groupKey),
+    }
+  } else {
+    state = { ...state, favourites, favJourneys, groups }
+  }
+  persist()
+  return {
+    favourites: state.favourites.length,
+    favJourneys: state.favJourneys.length,
+    groups: state.groups.length,
+  }
 }

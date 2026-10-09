@@ -17,7 +17,10 @@
     <a class="brand" href="./" aria-label="Which Bus? home">
       <img src="/favicon.svg" alt="" width="28" height="28" /> Which Bus?
     </a>
-    <button id="origin-btn" class="origin-pill" type="button"></button>
+    <div class="header-actions">
+      <button id="manage-btn" class="origin-pill manage-pill" type="button" title="Manage places, groups & backups" aria-label="Manage places and backups">★</button>
+      <button id="origin-btn" class="origin-pill" type="button"></button>
+    </div>
   </header>
 
   <main id="app" class="app"></main>
@@ -44,6 +47,14 @@
         <ul id="map-results" class="search-results" role="listbox"></ul>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="manage-dialog" class="manage-dialog">
+    <div class="manage-head">
+      <h2 id="manage-title">My places</h2>
+      <button class="icon-btn" id="manage-close" type="button" aria-label="Close">×</button>
+    </div>
+    <div class="manage-body" id="manage-body"></div>
   </dialog>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"

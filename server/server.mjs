@@ -42,6 +42,7 @@ import { Readable } from 'node:stream'
 
 let searchIndex = { stops: [], localities: [] }
 let stopLocality = new Map() // atco -> immediate locality name
+let stopCtx = new Map() // atco -> breadcrumb context ["York", …]
 async function loadSearchIndex() {
   try {
     const gzPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'search-index.json.gz')
@@ -56,15 +57,19 @@ async function loadSearchIndex() {
       searchIndex = JSON.parse(Buffer.concat(chunks).toString('utf8'))
     }
     const map = new Map()
+    const ctxMap = new Map()
     for (const st of searchIndex.stops || []) {
       const loc = st.c?.[0]
       if (st.a && loc) map.set(st.a, loc)
+      if (st.a && Array.isArray(st.c) && st.c.length) ctxMap.set(st.a, st.c)
     }
     stopLocality = map
+    stopCtx = ctxMap
   } catch (err) {
     console.error('failed to load search index', err)
     searchIndex = { stops: [], localities: [] }
     stopLocality = new Map()
+    stopCtx = new Map()
   }
 }
 loadSearchIndex()
@@ -270,6 +275,17 @@ const server = http.createServer(async (req, res) => {
     } catch (err) {
       return json(res, 502, { error: String(err && err.message || err) })
     }
+  }
+
+  if (url.pathname === '/api/stop-ctx') {
+    const atcos = (url.searchParams.get('atco') || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+    if (!atcos.length) return badRequest(res, 'missing atco')
+    const ctx = {}
+    for (const a of atcos) ctx[a] = stopCtx.get(a) || []
+    return json(res, 200, { ctx })
   }
 
   if (url.pathname === '/api/service-stops') {

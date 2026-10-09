@@ -2,6 +2,7 @@ import { registerSW } from 'virtual:pwa-register'
 import { getState, setOrigin, setToStop, setDestination, setOperator, clearOrigin, getFavourites, removeFavourite, getFavJourneys, removeFavJourney, sharedStateFromUrl } from './store.js'
 import { bootBoard, setReplaceOriginHandler } from './board.js'
 import { openSearch, initSearch, closeSearch } from './search.js'
+import { initManage, openManage } from './manage.js'
 
 registerSW({
   immediate: true,
@@ -188,5 +189,11 @@ originBtn.addEventListener('contextmenu', (e) => {
 })
 
 initSearch()
+initManage()
+document.getElementById('manage-btn').addEventListener('click', openManage)
+document.addEventListener('whichbus:places', () => {
+  renderHeader()
+  if (!getState().origin) renderHero()
+})
 document.addEventListener('whichbus:reboot', () => boot())
 boot()

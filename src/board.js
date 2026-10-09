@@ -1,5 +1,5 @@
 import { MAX_DEPARTURES, REFRESH_MS, STALE_MS } from './config.js'
-import { stopDepartures, stopServices } from './api.js'
+import { stopDepartures, stopServices, serviceStops, stopCtx } from './api.js'
 import {
   getState, setOrigin, setDestination, setToStop, setOperator, clearOrigin,
   buildShareUrl, addFavourite, removeFavourite, isFavourite, toggleFavourite,
@@ -29,6 +29,8 @@ let lineFilter = null // { slug, line } — narrows the board to one service
 let originServices = [] // every service calling at the origin stop
 let svcOpen = false // is the "services here" panel expanded?
 const stopServicesCache = new Map() // atco -> services[]
+const stopCtxCache = new Map() // atco -> breadcrumb context ["York", …]
+let towards = null // { key, links:Set<slug>, times:[{line,slug,time,tomorrow}] }
 
 function atcosOf(stop) {
   if (!stop) return []
@@ -62,6 +64,7 @@ export function bootBoard(app, origin) {
   lineFilter = null
   originServices = []
   svcOpen = false
+  towards = null
   boardOrigin = origin
   const el = document.createElement('section')
   el.className = 'board'
@@ -365,6 +368,63 @@ async function loadToArrivals() {
   return toArrivals
 }
 
+function nowMinutes() {
+  const d = new Date()
+  return d.getHours() * 60 + d.getMinutes()
+}
+
+function hhmmToMinutes(t) {
+  const [h, m] = String(t ?? '').split(':').map(Number)
+  return Number.isFinite(h) ? h * 60 + (m || 0) : null
+}
+
+// The timetable knows the true stop order along each direction — unlike the
+// destination's departure board, which at a terminus only shows the return
+// journeys. So when a shared route runs origin → destination, trust it: a real
+// "towards your destination" bus even when the live window has none. Also gives
+// the next scheduled time, so a "no bus right now" dead-end becomes "next at HH:MM".
+async function ensureTowards() {
+  const key = atcosOf(boardOrigin).join(',') + '|' + toAtcos.join(',')
+  if (towards && towards.key === key) return towards
+  const t = { key, links: new Set(), times: [] }
+  towards = t
+  if (!toInfo || !toAtcos.length || !originServices.length) return t
+  const originSlugs = new Set(originServices.map((s) => s.slug).filter(Boolean))
+  const shared = [...new Set((toInfo.services || []).map((s) => s.slug).filter((s) => s && originSlugs.has(s)))]
+  if (!shared.length) return t
+  const originAtcos = new Set(atcosOf(boardOrigin))
+  const destAtcos = new Set(toAtcos)
+  const now = nowMinutes()
+  await Promise.all(
+    shared.map(async (slug) => {
+      let data
+      try {
+        data = await serviceStops(slug)
+      } catch {
+        return
+      }
+      const svc = (toInfo.services || []).find((s) => s.slug === slug) || originServices.find((s) => s.slug === slug)
+      let best = null
+      for (const dir of data.directions || []) {
+        const oi = dir.stops.findIndex((s) => originAtcos.has(s.atco))
+        if (oi < 0) continue
+        const di = dir.stops.findIndex((s, i) => i > oi && destAtcos.has(s.atco))
+        if (di < 0) continue
+        t.links.add(slug)
+        for (const raw of dir.stops[oi].times || []) {
+          const mins = hhmmToMinutes(raw)
+          if (mins === null) continue
+          const after = (mins - now + 1440) % 1440
+          if (!best || after < best.after) best = { time: String(raw).trim(), after, tomorrow: mins < now }
+        }
+      }
+      if (best) t.times.push({ slug, line: svc?.line || '', time: best.time, tomorrow: best.tomorrow, after: best.after })
+    })
+  )
+  t.times.sort((a, b) => a.after - b.after)
+  return t
+}
+
 function svcOps(svc) {
   if (!svc || !svc.operators) return []
   return (Array.isArray(svc.operators) ? svc.operators : [svc.operators]).filter(Boolean)
@@ -394,10 +454,12 @@ async function ensureOriginServices() {
     merged.set(svc.slug, svc)
   }
   originServices = [...merged.values()]
+  towards = null
   if (typeof renderStopPanel === 'function') {
     renderStopPanel('origin-panel', boardOrigin)
     renderStopPanel('dest-panel', boardTo)
   }
+  if (toInfo) ensureTowards().then(renderRows)
 
   return originServices
 }
@@ -546,6 +608,7 @@ function applyToStop(stop) {
     : null
   toArrivals = null
   toDir = null
+  towards = null
   renderToChip(stop)
   renderRows()
   document.dispatchEvent(new Event('whichbus:tochange'))
@@ -562,6 +625,7 @@ function applyToStop(stop) {
       renderStopPanel('origin-panel', boardOrigin)
       renderStopPanel('dest-panel', boardTo)
     }
+    ensureTowards().then(renderRows)
   })
   loadToArrivals().then(renderRows)
 }
@@ -603,6 +667,7 @@ function servesTo(item) {
     ? toInfo.slugs?.has(slug) || toInfo.lines.has(item.line)
     : toInfo.lines.has(item.line)
   if (!lineOk) return false
+  if (slug && towards?.links?.has(slug)) return true
   if (!toDir) return true
   return legVerdict(item, toDir) !== DIR.WRONG
 }
@@ -772,6 +837,16 @@ function nothingMsg() {
     const all = (boardState?.departures || []).length
     const destLabel = escapeHtml(toStop?.label || 'your destination')
     const here = [...new Set((boardState?.departures || []).map((d) => d.line))].sort((a, b) => String(a).localeCompare(b))
+    if (!destination && !operator && towards?.times?.length) {
+      const items = towards.times
+        .slice(0, 4)
+        .map((t) => `${t.line ? `<b>${escapeHtml(t.line)}</b> ` : ''}${t.tomorrow ? `tomorrow ${escapeHtml(t.time)}` : escapeHtml(t.time)}`)
+        .join(' · ')
+      return [
+        `No direct bus from <b>${escapeHtml(origin.label)}</b> to <b>${destLabel}</b> in the live window —`,
+        `next scheduled${towards.times.length === 1 ? '' : 's'} from the timetable: ${items}.`,
+      ].join(' ')
+    }
     if (toDir && !destination && !operator) {
       const wrongWay = (boardState?.departures || []).filter((d) => legVerdict(d, toDir) === DIR.WRONG)
       if (wrongWay.length) {
@@ -876,6 +951,32 @@ function routeNumsHTML(lines, services, through, dim) {
     .join('')
 }
 
+async function ensureStopCtx(atcos) {
+  const missing = [...new Set((atcos || []).filter((a) => a && !stopCtxCache.has(a)))]
+  if (!missing.length) return
+  try {
+    const ctx = await stopCtx(missing)
+    for (const a of missing) stopCtxCache.set(a, Array.isArray(ctx[a]) ? ctx[a] : [])
+  } catch {
+    for (const a of missing) stopCtxCache.set(a, [])
+  }
+}
+
+// "Rail Station" is ambiguous alone, so show its locality trail ("York") the
+// same way search results do. Group stops carry no per-member ctx, so fall back
+// to the first member's cached context.
+function crumbNames(stopInfo, members) {
+  let src = Array.isArray(stopInfo.ctx) && stopInfo.ctx.length ? stopInfo.ctx : null
+  if (!src) {
+    for (const m of members) {
+      const c = stopCtxCache.get(m.atco)
+      if (c && c.length) { src = c; break }
+    }
+  }
+  if (!src) return []
+  return [...new Set(src.map((c) => String(c ?? '').trim()).filter(Boolean))]
+}
+
 function renderStopPanel(containerId, stopInfo) {
   const container = document.getElementById(containerId)
   if (!container || !stopInfo) return
@@ -884,6 +985,19 @@ function renderStopPanel(containerId, stopInfo) {
   const count = isGroup ? (stopInfo.stops?.length || 0) : 0
   const fav = isFavourite(stopInfo)
   const members = isGroup ? (stopInfo.stops || []) : [stopInfo]
+
+  const crumbs = crumbNames(stopInfo, members)
+  if (!crumbs.length) {
+    const atco = members.map((m) => m.atco).find((a) => a && !stopCtxCache.has(a))
+    if (atco) ensureStopCtx([atco]).then(() => {
+      if (crumbNames(stopInfo, members).length) renderStopPanel(containerId, stopInfo)
+    })
+  }
+  const crumbHtml = crumbs.length
+    ? '<span class="stop-panel-crumb">' +
+      crumbs.map(escapeHtml).join('<span class="crumb-sep">›</span>') +
+      '</span>'
+    : ''
 
   const isOrigin = containerId === 'origin-panel'
   const panelServices = isOrigin
@@ -928,6 +1042,7 @@ function renderStopPanel(containerId, stopInfo) {
   html += '<span class="stop-panel-icon">' + (isGroup ? '🏛' : '🚏') + '</span>'
   html += '<span class="stop-panel-name">' + escapeHtml(label) + '</span>'
   html += '<button class="icon-btn small" data-replace="' + escapeHtml(containerId) + '" type="button" title="Replace stop">🔍</button>'
+  html += crumbHtml
   html += '</div></div>'
   html += '<div class="stop-panel-body">'
 

@@ -49,3 +49,8 @@ export function stopServices(atco) {
 export function serviceStops(slug) {
   return apiGet('/api/service-stops', { slug })
 }
+
+export function stopCtx(atcos) {
+  const list = Array.isArray(atcos) ? atcos.filter(Boolean) : [atcos].filter(Boolean)
+  return apiGet('/api/stop-ctx', { atco: list.join(',') }).then((r) => r.ctx || {})
+}

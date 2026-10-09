@@ -1,5 +1,5 @@
 import { searchLocalities, searchAll, localityStops, localityDirections, nearby, stopDepartures, stopServices } from './api.js'
-import { getState, getFavourites, removeFavourite } from './store.js'
+import { getState, getFavourites, removeFavourite, getGroups, resolveGroup } from './store.js'
 import { stopDirProfile, bestSharedLeg } from './routes.js'
 
 let active = false
@@ -53,9 +53,19 @@ function resetToPlaces() {
 }
 
 function renderFavourites() {
+  const groups = getGroups()
   const favs = getFavourites()
-  if (!favs.length) return
+  if (!groups.length && !favs.length) return
   const frag = document.createDocumentFragment()
+  for (const g of groups) {
+    const resolved = resolveGroup(g)
+    const count = resolved?.stops.length || 0
+    const li = document.createElement('li')
+    li.className = 'result fav-result custom-group'
+    li.innerHTML = `<span class="r-icon">🏷</span><span class="r-main">${escapeHtml(g.name)}<small class="r-lines">my group · ${count} stop${count === 1 ? '' : 's'}</small></span><span class="r-cta">＋</span>`
+    li.addEventListener('click', () => onPick?.(resolved))
+    frag.appendChild(li)
+  }
   for (const [i, f] of favs.entries()) {
     const li = document.createElement('li')
     li.className = 'result fav-result'
@@ -283,7 +293,7 @@ function groupStops(stops) {
 // that share a stem ("Rail Station (Stop RA) ↑" …) into one group card, keeping
 // the best-ranked member's position, so searching "york station" surfaces the
 // group rather than ten anonymous stop rows. Localities pass through untouched.
-function groupSearchResults(res) {
+export function groupSearchResults(res) {
   const out = []
   for (const [i, r] of (res || []).entries()) {
     if (r.type === 'locality') {
