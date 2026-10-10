@@ -8,7 +8,7 @@ import { escapeHtml } from './html.js'
 registerSW({
   immediate: true,
   onNeedRefresh() {
-    if (!document.getElementById('search-dialog')?.open) location.reload()
+    if (!/** @type {HTMLDialogElement|null} */ (document.getElementById('search-dialog'))?.open) location.reload()
   },
 })
 
@@ -108,7 +108,7 @@ function renderHero() {
     </section>`
   app.querySelector('.btn-primary').addEventListener('click', () => openSearch(firstRun))
   for (const chip of app.querySelectorAll('.fav-chip[data-jf]')) {
-    const j = getFavJourneys()[Number(chip.dataset.jf)]
+    const j = getFavJourneys()[Number(/** @type {HTMLElement} */ (chip).dataset.jf)]
     if (!j) continue
     chip.querySelector('.fav-go')?.addEventListener('click', () => {
       closeSearch()
@@ -125,13 +125,13 @@ function renderHero() {
   }
   for (const btn of app.querySelectorAll('.fav-chip:not([data-jf])')) {
     btn.querySelector('.fav-go')?.addEventListener('click', () => {
-      const chos = getFavourites()[Number(btn.dataset.fav)]
+      const chos = getFavourites()[Number(/** @type {HTMLElement} */ (btn).dataset.fav)]
       if (!chos) return
       closeSearch()
       firstRun(chos)
     })
     btn.querySelector('.fav-x')?.addEventListener('click', () => {
-      const chos = getFavourites()[Number(btn.dataset.fav)]
+      const chos = getFavourites()[Number(/** @type {HTMLElement} */ (btn).dataset.fav)]
       if (!chos) return
       removeFavourite(chos)
       renderHero()

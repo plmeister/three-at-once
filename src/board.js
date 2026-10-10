@@ -103,22 +103,22 @@ export function bootBoard(app, origin) {
     renderStopPanel('origin-panel', boardOrigin)
     if (typeof renderStopPanel === 'function') renderStopPanel('dest-panel', boardTo)
   }
-  const setDestBtn = el.querySelector('#btn-set-to')
+  const setDestBtn = /** @type {HTMLElement|null} */ (el.querySelector('#btn-set-to'))
   if (setDestBtn && boardTo) setDestBtn.style.display = 'none'
   else if (setDestBtn) setDestBtn.style.display = 'inline-flex'
   ensureOriginServices().catch(() => {})
 
 
-  const list = el.querySelector('#dep-list')
+  const list = /** @type {HTMLElement} */ (el.querySelector('#dep-list'))
   const stamp = el.querySelector('#board-stamp')
-  const select = el.querySelector('#dest-select')
-  const opSelect = el.querySelector('#op-select')
-  const refresh = el.querySelector('#btn-refresh')
-  const share = el.querySelector('#btn-share')
-  const jfav = el.querySelector('#btn-jfav')
-  const swap = el.querySelector('#btn-swap')
-  const clear = el.querySelector('#btn-clear')
-  const toRow = el.querySelector('#to-row')
+  const select = /** @type {HTMLSelectElement} */ (el.querySelector('#dest-select'))
+  const opSelect = /** @type {HTMLSelectElement} */ (el.querySelector('#op-select'))
+  const refresh = /** @type {HTMLButtonElement} */ (el.querySelector('#btn-refresh'))
+  const share = /** @type {HTMLButtonElement} */ (el.querySelector('#btn-share'))
+  const jfav = /** @type {HTMLButtonElement} */ (el.querySelector('#btn-jfav'))
+  const swap = /** @type {HTMLButtonElement} */ (el.querySelector('#btn-swap'))
+  const clear = /** @type {HTMLButtonElement} */ (el.querySelector('#btn-clear'))
+  const toRow = /** @type {HTMLElement} */ (el.querySelector('#to-row'))
 
   // Route numbers are delegated: rows are re-rendered wholesale on every poll,
   // so per-row listeners would be thrown away every 20s.
@@ -458,7 +458,7 @@ function refreshFareOps() {
 }
 
 function renderFareNote() {
-  const note = document.querySelector('#fare-note')
+  const note = /** @type {HTMLElement|null} */ (document.querySelector('#fare-note'))
   if (!note) return
   const ops = [...fareOps].sort((a, b) => a.localeCompare(b))
   if (!ops.length) {
@@ -491,7 +491,7 @@ function applyToStop(stop) {
   document.dispatchEvent(new Event('whichbus:tochange'))
   boardTo = stop
   if (typeof renderStopPanel === 'function') renderStopPanel('dest-panel', boardTo)
-  const setDestBtn = document.querySelector('#btn-set-to')
+  const setDestBtn = /** @type {HTMLElement|null} */ (document.querySelector('#btn-set-to'))
   if (setDestBtn) setDestBtn.style.display = boardTo ? 'none' : 'inline-flex'
 
   if (!stop) return
@@ -617,9 +617,9 @@ function depFrom(r) {
 }
 
 function renderRows() {
-  const list = document.getElementById('dep-list')
-  const foot = document.getElementById('board-foot')
-  const select = document.getElementById('dest-select')
+  const list = /** @type {HTMLElement} */ (document.getElementById('dep-list'))
+  const foot = /** @type {HTMLElement} */ (document.getElementById('board-foot'))
+  const select = /** @type {HTMLSelectElement|null} */ (document.getElementById('dest-select'))
   if (!select) {
     // board not mounted (origin cleared) — guard module-level statelessness
     return
@@ -739,7 +739,7 @@ function minFromNow(timeStr) {
   const now = new Date()
   const target = new Date(now)
   target.setHours(h, m, 0, 0)
-  let mins = Math.round((target - now) / 60000)
+  let mins = Math.round((target.getTime() - now.getTime()) / 60000)
   if (mins < -720) mins += 1440
   if (mins < -2) return null
   if (mins < 0) mins = 0
@@ -923,7 +923,7 @@ function renderStopPanel(containerId, stopInfo) {
   container.querySelectorAll('[data-fav-mem]').forEach((btn) => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation()
-      const idx = parseInt(btn.dataset.favMem,10)
+      const idx = parseInt(/** @type {HTMLElement} */ (btn).dataset.favMem || '', 10)
       const m = members[idx]
       if (m) { toggleFavourite(m); renderStopPanel(containerId, stopInfo) }
     })
@@ -941,7 +941,8 @@ function renderStopPanel(containerId, stopInfo) {
   container.querySelectorAll('[data-route]').forEach((btn) => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation()
-      const svc = panelServices.find((s) => s.slug === btn.dataset.route) || serviceBySlug(btn.dataset.route)
+      const route = /** @type {HTMLElement} */ (btn).dataset.route
+      const svc = panelServices.find((s) => s.slug === route) || serviceBySlug(route)
       tapRoute(btn, routeOpts(btn, svc))
     })
   })

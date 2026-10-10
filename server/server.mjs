@@ -38,38 +38,89 @@ const cache = createCache(1000, { file: cacheDb })
 import { createGunzip } from 'node:zlib'
 import { pipeline } from 'node:stream/promises'
 import { createReadStream } from 'node:fs'
-import { Readable } from 'node:stream'
+
+import { buildIndex, writeIndexGz } from './build-index.mjs'
+
+const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url))
+const INDEX_TTL_MS = Number(process.env.WB_INDEX_TTL_HOURS || 7 * 24) * 60 * 60 * 1000
+// Refreshed copies live beside the runtime cache (the data volume); the image
+// ships a seed at server/search-index.json.gz so search works on a cold start.
+const dataIndexGz = cacheDb ? path.join(path.dirname(cacheDb), 'search-index.json.gz') : null
+const seedIndexGz = path.join(SERVER_DIR, 'search-index.json.gz')
 
 let searchIndex = { stops: [], localities: [] }
 let stopLocality = new Map() // atco -> immediate locality name
 let stopCtx = new Map() // atco -> breadcrumb context ["York", …]
+let indexSource = null // file the current index came from
+let indexBuiltAt = 0 // epoch ms the current index was built
+let refreshing = false
+
+async function readIndexFile(file) {
+  const chunks = []
+  await pipeline(createReadStream(file), createGunzip(), async (source) => {
+    for await (const chunk of source) chunks.push(chunk)
+  })
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+}
+
+function applyIndex(index) {
+  searchIndex = index || { stops: [], localities: [] }
+  const locMap = new Map()
+  const ctxMap = new Map()
+  for (const st of searchIndex.stops || []) {
+    const loc = st.c?.[0]
+    if (st.a && loc) locMap.set(st.a, loc)
+    if (st.a && Array.isArray(st.c) && st.c.length) ctxMap.set(st.a, st.c)
+  }
+  stopLocality = locMap
+  stopCtx = ctxMap
+}
+
 async function loadSearchIndex() {
+  for (const file of [dataIndexGz, seedIndexGz].filter(Boolean)) {
+    if (!existsSync(file)) continue
+    try {
+      const index = await readIndexFile(file)
+      applyIndex(index)
+      indexSource = file
+      indexBuiltAt = index.builtAt ? Date.parse(index.builtAt) : statSync(file).mtimeMs
+      console.log(`search index: ${searchIndex.stops.length} stops, ${searchIndex.localities.length} localities from ${file} (built ${new Date(indexBuiltAt).toISOString()})`)
+      break
+    } catch (err) {
+      console.error(`failed to read search index ${file}`, err)
+    }
+  }
+  if (!indexSource) {
+    console.error('no search index found — search stays empty until one is built')
+    applyIndex(null)
+  }
+  if (!indexSource || Date.now() - indexBuiltAt > INDEX_TTL_MS) {
+    if (process.env.WB_INDEX_REFRESH === 'off') {
+      console.log('search index missing/stale but WB_INDEX_REFRESH=off — not refreshing')
+    } else {
+      const age = indexSource ? `${Math.round((Date.now() - indexBuiltAt) / 3.6e6)}h old` : 'missing'
+      console.log(`search index ${age} — refreshing in background`)
+      setTimeout(() => refreshIndex().catch((err) => console.error('index refresh failed', err)), 0)
+    }
+  }
+}
+
+// Rebuild from upstream and swap in atomically. Single-flight, non-blocking:
+// requests keep using the current index (seed or last good refresh) meanwhile.
+async function refreshIndex() {
+  if (refreshing) return
+  refreshing = true
   try {
-    const gzPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'search-index.json.gz')
-    const jsonPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'search-index.json')
-    if (existsSync(jsonPath)) {
-      searchIndex = JSON.parse(await readFile(jsonPath, 'utf8'))
-    } else if (existsSync(gzPath)) {
-      const chunks = []
-      await pipeline(createReadStream(gzPath), createGunzip(), async (source) => {
-        for await (const chunk of source) chunks.push(chunk)
-      })
-      searchIndex = JSON.parse(Buffer.concat(chunks).toString('utf8'))
-    }
-    const map = new Map()
-    const ctxMap = new Map()
-    for (const st of searchIndex.stops || []) {
-      const loc = st.c?.[0]
-      if (st.a && loc) map.set(st.a, loc)
-      if (st.a && Array.isArray(st.c) && st.c.length) ctxMap.set(st.a, st.c)
-    }
-    stopLocality = map
-    stopCtx = ctxMap
-  } catch (err) {
-    console.error('failed to load search index', err)
-    searchIndex = { stops: [], localities: [] }
-    stopLocality = new Map()
-    stopCtx = new Map()
+    const index = await buildIndex({ log: (m) => console.log(`[index] ${m}`) })
+    if (!index.stops?.length) throw new Error('rebuilt index is empty — keeping current')
+    const target = dataIndexGz || seedIndexGz
+    await writeIndexGz(index, target)
+    applyIndex(index)
+    indexSource = target
+    indexBuiltAt = Date.now()
+    console.log(`search index refreshed: ${index.stops.length} stops, ${index.localities.length} localities → ${target}`)
+  } finally {
+    refreshing = false
   }
 }
 loadSearchIndex()
@@ -377,6 +428,19 @@ const server = http.createServer(async (req, res) => {
     } catch (err) {
       return json(res, 502, { error: String(err && err.message || err) })
     }
+  }
+
+  if (url.pathname === '/api/index-status') {
+    return json(res, 200, {
+      ready: (searchIndex.stops?.length || 0) > 0,
+      source: indexSource,
+      builtAt: indexBuiltAt ? new Date(indexBuiltAt).toISOString() : null,
+      ageHours: indexBuiltAt ? Math.round((Date.now() - indexBuiltAt) / 3.6e6) : null,
+      ttlHours: INDEX_TTL_MS / 3.6e6,
+      refreshing,
+      stops: searchIndex.stops?.length || 0,
+      localities: searchIndex.localities?.length || 0,
+    })
   }
 
   if (url.pathname.startsWith('/api/')) return badRequest(res, 'unknown endpoint')

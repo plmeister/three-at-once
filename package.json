@@ -13,14 +13,18 @@
     "start": "node server/server.mjs",
     "test": "node test/e2e.mjs",
     "test:route": "node test/smoke-route.mjs",
+    "build:index": "node server/build-index.mjs",
+    "typecheck": "tsc --noEmit",
     "icons": "pwa-assets-generator"
   },
   "dependencies": {
     "vite": "^6.3.5"
   },
   "devDependencies": {
+    "@types/node": "^26.6.5",
     "@vite-pwa/assets-generator": "^0.2.6",
     "jsdom": "^29.1.1",
+    "typescript": "^7.0.2",
     "vite-plugin-pwa": "^0.21.2"
   }
 }

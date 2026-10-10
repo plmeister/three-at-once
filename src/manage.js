@@ -129,6 +129,7 @@ function renderEditor(msg) {
     })
   }
 
+  /** @type {ReturnType<typeof setTimeout>|0} */
   let debounce = 0
   searchBox.addEventListener('input', () => {
     clearTimeout(debounce)

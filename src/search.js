@@ -11,15 +11,16 @@ let browsing = null // { slug, name } when drilling into a locality
 let dirMap = null // atco -> { line: [destinations] } route-direction labels
 let favMine = 0 // generation counter: invalidates in-flight favourite mining
 
-const dialog = () => document.getElementById('search-dialog')
-const input = () => document.getElementById('search-input')
-const results = () => document.getElementById('search-results')
+const dialog = () => /** @type {HTMLDialogElement} */ (document.getElementById('search-dialog'))
+const input = () => /** @type {HTMLInputElement} */ (document.getElementById('search-input'))
+const results = () => /** @type {HTMLElement} */ (document.getElementById('search-results'))
 const hint = () => document.getElementById('search-hint')
 const back = () => document.getElementById('search-back')
 
 const DEST_HINT = 'Where are you going? Pick the stop you’d arrive at.'
 const ORIGIN_HINT = 'Where will you be picked up? Pick the stop you leave from.'
 
+/** @type {ReturnType<typeof setTimeout>|0} */
 let debounce = 0
 
 export function openSearch(pick, mode = 'origin') {
@@ -74,7 +75,7 @@ function renderFavourites() {
     const glyph = f.kind === 'group' ? '🏛' : '🚏'
     li.innerHTML = `<span class="r-icon">★</span><span class="r-main">${escapeHtml(f.label)}<small class="r-lines">favourite · ${fvLines(f)}</small></span><span class="r-cta r-x" data-fav="${i}">✕</span>`
     li.addEventListener('click', (e) => {
-      if (e.target.closest('.r-x')) {
+      if (/** @type {Element} */ (e.target).closest('.r-x')) {
         removeFavourite(f)
         resetToPlaces()
         return
@@ -152,7 +153,7 @@ function applyDirections(directions) {
 function stampDirs() {
   if (!dirMap) return
   for (const row of results().querySelectorAll('.result.stop-result[data-atco]')) {
-    const d = dirMap[row.dataset.atco]
+    const d = dirMap[/** @type {HTMLElement} */ (row).dataset.atco]
     if (!d || row.querySelector('.r-dir')) continue
     const dests = [...new Set(Object.values(d).flat())].filter(Boolean)
     if (!dests.length) continue
@@ -367,7 +368,7 @@ function renderList() {
       li.className = 'result group-result'
       const uniqLines = [...new Set(item.lines || [])].join(' · ')
       li.innerHTML = `<span class="r-icon">🏛</span><span class="r-main">${escapeHtml(item.label)}${crumbsHTML(item.ctx, item.slug)}<small class="r-lines">${item.stops.length} stops${uniqLines ? ` · ${escapeHtml(uniqLines)}` : ''}</small></span><span class="r-cta">▸</span>`
-      li.addEventListener('click', (e) => { if (e.target.closest('.crumb')) return; onPick?.(item) })
+      li.addEventListener('click', (e) => { if (/** @type {Element} */ (e.target).closest('.crumb')) return; onPick?.(item) })
     } else if (item.type === 'locality') {
       li.innerHTML = `<span class="r-icon">⌖</span><span class="r-main">${escapeHtml(item.name)}${item.qualifier ? ` <small>${escapeHtml(item.qualifier)}</small>` : ''}</span><span class="r-cta">›</span>`
       li.addEventListener('click', () => openLocality(item))
@@ -376,7 +377,7 @@ function renderList() {
       if (item.atco) li.dataset.atco = item.atco
       li.innerHTML = `<span class="r-icon">🚏</span><span class="r-main">${escapeHtml(item.label)}${item.lines?.length ? `<small class="r-lines">${item.lines.map(escapeHtml).join(' · ')}</small>` : ''}${crumbsHTML(item.ctx, item.slug)}</span><span class="r-cta">＋</span>`
       li.addEventListener('click', (e) => {
-        if (e.target.closest('.crumb')) return
+        if (/** @type {Element} */ (e.target).closest('.crumb')) return
         onPick?.(item)
       })
     }
@@ -446,7 +447,7 @@ export function initSearch() {
   input().addEventListener('input', search)
   document.getElementById('search-close').addEventListener('click', closeSearch)
   results().addEventListener('click', (e) => {
-    const crumb = e.target.closest?.('.crumb')
+    const crumb = /** @type {HTMLElement|null} */ (/** @type {Element} */ (e.target).closest?.('.crumb'))
     if (crumb) {
       e.stopPropagation()
       openLocalityByName(crumb.dataset.crumb, crumb.dataset.slug)
@@ -672,7 +673,7 @@ async function stampFavChip({ i, f }, next, destDeps, gen) {
 // ---- "use my location": reverse-geocode → nearest locality → its stops ----
 
 async function locateMe() {
-  const btn = document.getElementById('locate-btn')
+  const btn = /** @type {HTMLButtonElement} */ (document.getElementById('locate-btn'))
   if (!('geolocation' in navigator)) {
     hint().textContent = 'Your browser doesn’t support location.'
     return
