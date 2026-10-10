@@ -327,7 +327,7 @@ function unionBy(existing, incoming, keyOf) {
 // Merge (default) keeps local entries and adds anything new; replace swaps the
 // whole set. Either way only structurally valid entries survive.
 export function importData(data, { merge = true } = {}) {
-  if (!data || typeof data !== 'object') throw new Error('Not a Which Bus backup file')
+  if (!data || typeof data !== 'object') throw new Error('Not a three@once backup file')
   const favourites = Array.isArray(data.favourites) ? data.favourites.filter(validOrigin) : []
   const favJourneys = Array.isArray(data.favJourneys) ? data.favJourneys.filter(validJourney) : []
   const groups = Array.isArray(data.groups) ? data.groups.filter(validGroup) : []

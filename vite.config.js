@@ -23,8 +23,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg', 'apple-touch-icon-180x180.png'],
       manifest: {
-        name: 'Which Bus?',
-        short_name: 'WhichBus',
+        name: 'three@once',
+        short_name: 'three@once',
         description: 'Next departures from your stop — scheduled and live',
         theme_color: '#0b1f3a',
         background_color: '#0b1f3a',

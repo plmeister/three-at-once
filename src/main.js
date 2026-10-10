@@ -100,7 +100,7 @@ function renderHero() {
   const favs = getFavourites()
   const journeys = getFavJourneys()
   app.innerHTML = `<section class="hero">
-      <h1>Which bus?</h1>
+      <h1>three@once</h1>
       <p>Pick where you’re leaving from, set your destination, and see the buses that get you there. You can filter by bus company (return tickets!), save named journeys, and bookmark favourite stops.</p>
       <button class="btn-primary" type="button">1 · Choose departure point</button>
       ${journeys.length ? `<div class="hero-section"><h2>Saved journeys</h2><div class="fav-row">${journeys.map((j, i) => journeyChip(j, i)).join('')}</div></div>` : ''}

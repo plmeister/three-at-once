@@ -450,5 +450,5 @@ const server = http.createServer(async (req, res) => {
 })
 
 server.listen(PORT, () => {
-  console.log(`whichbus server on :${PORT} (static: ${existsSync(DIST) ? 'dist' : 'none'})`)
+  console.log(`three@once server on :${PORT} (static: ${existsSync(DIST) ? 'dist' : 'none'})`)
 })

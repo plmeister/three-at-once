@@ -1,4 +1,4 @@
-# Which Bus?
+# three@once
 
 Next-bus board for your stop. Scheduled + live departure times, destination
 filter, bay/platform, installable PWA. No accounts, no LLM.

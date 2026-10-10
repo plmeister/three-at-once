@@ -1,9 +1,9 @@
 {
-  "name": "whichbus",
+  "name": "three-at-once",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Which Bus? — next departures from your stop, scheduled + live",
+  "description": "three@once — next departures from your stop, scheduled + live",
   "scripts": {
     "dev": "node server/server.mjs & vite",
     "dev:web": "vite",
