@@ -14,6 +14,9 @@ dist/
 server/search-index.json
 server/*.gz.tmp
 
+# downloaded NaPTAN/NPTG datasets (build-index.mjs cache)
+/data/
+
 # logs / editor / OS noise
 *.log
 npm-debug.log*

@@ -240,6 +240,7 @@ const server = http.createServer(async (req, res) => {
         if (results.length >= limit * 2) break
       }
       function scoreStop(st) {
+        if (st.na && String(st.na).toLowerCase() === ql) return 190
         const label = String(st.l || st.label || '').toLowerCase()
         const ctx = (st.c || []).join(' ').toLowerCase()
         const loc = String(st.c?.[0] || '').toLowerCase()
@@ -268,6 +269,7 @@ const server = http.createServer(async (req, res) => {
         results.push({
           type: 'stop',
           atco: st.a,
+          naptan: st.na || null,
           label: st.l || st.label,
           name: st.l || st.label,
           slug: st.slug,
