@@ -6,9 +6,9 @@ import { readFile } from 'node:fs/promises'
 // detail that lives in the stack's Traefik labels. Default to a local server; to
 // test a deployed instance pass WB_ORIGIN explicitly:
 //   npm run build && npm start   →   npm test
-//   WB_ORIGIN=https://my-host WB_BASE=/whichbus npm test
+//   WB_ORIGIN=https://my-host WB_BASE=/three-at-once npm test
 const DEPLOYED = process.env.WB_ORIGIN || 'http://localhost:4848'
-const BASE = process.env.WB_BASE === undefined ? '/whichbus' : process.env.WB_BASE
+const BASE = process.env.WB_BASE === undefined ? '/three-at-once' : process.env.WB_BASE
 
 // 1. Bundle client as IIFE
 await build({

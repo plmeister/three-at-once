@@ -1,7 +1,7 @@
 const BASE = 'https://bustimes.org'
 const BUSES_REFERER = 'https://bustimes.org/'
 const UA =
-  'whichbus/0.1 (local bus-times app; rate-limited, cached)'
+  'three-at-once/0.1 (local bus-times app; rate-limited, cached)'
 const MIN_GAP_MS = Number(process.env.UPSTREAM_GAP_MS || 300)
 const TIMEOUT_MS = 15000
 

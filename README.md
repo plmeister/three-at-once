@@ -63,7 +63,7 @@ export const DEFAULT_ORIGIN = { atco: '2290YHA00113', label: 'Sculcoates, Anchor
 ## Sharing a journey
 
 The **⇪** button on a board returns a copy/share link like
-`…/whichbus/?s=…&saved=1` — a base64url snapshot of the departure point
+`…/three-at-once/?s=…&saved=1` — a base64url snapshot of the departure point
 (single stop or merged group), destination and destination filter. Opening it
 boots that exact board, so you can paste it in chat/email and someone else sees
 the same routes and times. Legacy `?atco=…&name=…` links still work.
@@ -197,10 +197,10 @@ It defaults to `http://localhost:4848` root-hosted. To point it at a deployed
 instance, override both — the test never assumes a hostname:
 
 ```bash
-WB_ORIGIN=https://my-host WB_BASE=/whichbus npm test
+WB_ORIGIN=https://my-host WB_BASE=/three-at-once npm test
 ```
 
-`WB_BASE` defaults to `/whichbus`; set it empty (`WB_BASE=`) for a root-hosted
+`WB_BASE` defaults to `/three-at-once`; set it empty (`WB_BASE=`) for a root-hosted
 local server.
 
 `npm run test:route` is the focused route-detail check: it spawns the API on
@@ -212,16 +212,17 @@ filter, and both route presentations (hover card, tap sheet, direction tabs,
 
 See `~/docker-stuff/stacks/README.md`. Summary:
 
-1. `docker network create whichbus-net`
-2. Give the stack `whichbus-net` + `proxy-net`, and put the route in the stack's
-   **container labels** (Traefik watches the Docker socket, `exposedByDefault=false`):
-   - `traefik.http.routers.whichbus.rule=Host(\`your-host\`) && PathPrefix(\`/whichbus\`)`
+1. `docker network create three-at-once-net`
+2. Give the stack `three-at-once-net` + `proxy-net`, and put the route in the
+   stack's **container labels** (Traefik watches the Docker socket,
+   `exposedByDefault=false`):
+   - `traefik.http.routers.three-at-once.rule=Host(\`your-host\`) && PathPrefix(\`/three-at-once\`)`
    - `entrypoints=websecure` + `tls.certresolver=letsencrypt`
-   - `middlewares=authelia-slash@file,…,whichbus-strip@docker` with
-     `whichbus-strip.stripprefix.prefixes=/whichbus`
+   - `middlewares=authelia-slash@file,…,three-at-once-strip@docker` with
+     `three-at-once-strip.stripprefix.prefixes=/three-at-once`
    - `sablier.enable=true` + group, for scale-to-zero
-3. `docker compose -f ~/docker-stuff/stacks/whichbus/compose.yaml up -d --build`
-4. Stack compose builds with `VITE_BASE=/whichbus/` (all asset/API/`start_url`
+3. `docker compose -f ~/docker-stuff/stacks/three-at-once/compose.yaml up -d --build`
+4. Stack compose builds with `VITE_BASE=/three-at-once/` (all asset/API/`start_url`
    paths are base-relative, so subpath hosting works).
 
 **The public URL lives in exactly one place: the stack compose's Traefik

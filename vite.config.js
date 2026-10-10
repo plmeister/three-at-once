@@ -3,7 +3,7 @@ import { VitePWA } from 'vite-plugin-pwa'
 
 const API_PORT = process.env.API_PORT || '4848'
 
-// Base path, e.g. set VITE_BASE=/whichbus/ when deployed behind a path prefix.
+// Base path, e.g. set VITE_BASE=/three-at-once/ when deployed behind a path prefix.
 const base = process.env.VITE_BASE || '/'
 
 export default defineConfig({
