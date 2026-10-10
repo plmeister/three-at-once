@@ -13,7 +13,7 @@ const PORT = Number(process.env.SMOKE_PORT || 4851)
 const API = `http://127.0.0.1:${PORT}`
 const ATCO = '2290YHA00113'
 
-const server = spawn(process.execPath, [path.join(ROOT, 'server', 'server.mjs')], {
+const server = spawn(process.execPath, ['--experimental-strip-types', path.join(ROOT, 'server', 'server.ts')], {
   cwd: ROOT,
   env: { ...process.env, PORT: String(PORT), CACHE_DB: '/tmp/opencode/smoke-cache.json' },
   stdio: 'ignore',

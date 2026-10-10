@@ -1,26 +1,37 @@
 import http from 'node:http'
 import { readFile } from 'node:fs/promises'
-import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs'
+import { createReadStream, existsSync, mkdirSync, statSync } from 'node:fs'
+import { createGunzip } from 'node:zlib'
+import { pipeline } from 'node:stream/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { createCache } from './cache.mjs'
+import { createCache } from './cache.ts'
 import {
-  parseDepartures, parseLocality, parseNearby, parseSearch, parseServiceStops, parseStopServices,
-  fetchUpstream, fetchExternal,
-} from './scrape.mjs'
+  parseDepartures,
+  parseLocality,
+  parseNearby,
+  parseSearch,
+  parseServiceStops,
+  parseStopServices,
+  fetchUpstream,
+  fetchExternal,
+} from './scrape.ts'
+import { buildIndex, writeIndexGz } from './build-index.ts'
+
+import type { Locality, SearchIndex, Stop } from './types.ts'
 
 const PORT = Number(process.env.PORT || 4848)
 const DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist')
 
 const DAY = 24 * 60 * 60 * 1000
 const TTL = {
-  search: 30 * DAY,          // locality/stop-name lookup — changes with the timetable at most
-  locality: 30 * DAY,        // stops in a locality — static between timetable seasons
-  stopServices: 7 * DAY,     // routes calling at a stop — reshuffles on timetable change
-  serviceStops: 14 * DAY,    // stops along a route — big page, only changes with the timetable
-  directions: 1 * DAY,       // route→terminus per stop, derived from live windows — daily refresh
-  departures: 20 * 1000,     // live
+  search: 30 * DAY, // locality/stop-name lookup — changes with the timetable at most
+  locality: 30 * DAY, // stops in a locality — static between timetable seasons
+  stopServices: 7 * DAY, // routes calling at a stop — reshuffles on timetable change
+  serviceStops: 14 * DAY, // stops along a route — big page, only changes with the timetable
+  directions: 1 * DAY, // route→terminus per stop, derived from live windows — daily refresh
+  departures: 20 * 1000, // live
   nearby: 7 * DAY,
 }
 const SLUG_RE = /^[0-9a-z][0-9a-z-]{0,80}$/
@@ -35,12 +46,6 @@ if (cacheDb) {
 }
 const cache = createCache(1000, { file: cacheDb })
 
-import { createGunzip } from 'node:zlib'
-import { pipeline } from 'node:stream/promises'
-import { createReadStream } from 'node:fs'
-
-import { buildIndex, writeIndexGz } from './build-index.mjs'
-
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url))
 const INDEX_TTL_MS = Number(process.env.WB_INDEX_TTL_HOURS || 7 * 24) * 60 * 60 * 1000
 // Refreshed copies live beside the runtime cache (the data volume); the image
@@ -48,25 +53,25 @@ const INDEX_TTL_MS = Number(process.env.WB_INDEX_TTL_HOURS || 7 * 24) * 60 * 60 
 const dataIndexGz = cacheDb ? path.join(path.dirname(cacheDb), 'search-index.json.gz') : null
 const seedIndexGz = path.join(SERVER_DIR, 'search-index.json.gz')
 
-let searchIndex = { stops: [], localities: [] }
-let stopLocality = new Map() // atco -> immediate locality name
-let stopCtx = new Map() // atco -> breadcrumb context ["York", …]
-let indexSource = null // file the current index came from
+let searchIndex: SearchIndex = { stops: [], localities: [] }
+let stopLocality = new Map<string, string>() // atco -> immediate locality name
+let stopCtx = new Map<string, string[]>() // atco -> breadcrumb context ["York", …]
+let indexSource: string | null = null // file the current index came from
 let indexBuiltAt = 0 // epoch ms the current index was built
 let refreshing = false
 
-async function readIndexFile(file) {
-  const chunks = []
+async function readIndexFile(file: string): Promise<SearchIndex> {
+  const chunks: Buffer[] = []
   await pipeline(createReadStream(file), createGunzip(), async (source) => {
-    for await (const chunk of source) chunks.push(chunk)
+    for await (const chunk of source) chunks.push(chunk as Buffer)
   })
   return JSON.parse(Buffer.concat(chunks).toString('utf8'))
 }
 
-function applyIndex(index) {
+function applyIndex(index: SearchIndex): void {
   searchIndex = index || { stops: [], localities: [] }
-  const locMap = new Map()
-  const ctxMap = new Map()
+  const locMap = new Map<string, string>()
+  const ctxMap = new Map<string, string[]>()
   for (const st of searchIndex.stops || []) {
     const loc = st.c?.[0]
     if (st.a && loc) locMap.set(st.a, loc)
@@ -76,8 +81,8 @@ function applyIndex(index) {
   stopCtx = ctxMap
 }
 
-async function loadSearchIndex() {
-  for (const file of [dataIndexGz, seedIndexGz].filter(Boolean)) {
+async function loadSearchIndex(): Promise<void> {
+  for (const file of [dataIndexGz, seedIndexGz].filter(Boolean) as string[]) {
     if (!existsSync(file)) continue
     try {
       const index = await readIndexFile(file)
@@ -87,27 +92,23 @@ async function loadSearchIndex() {
       console.log(`search index: ${searchIndex.stops.length} stops, ${searchIndex.localities.length} localities from ${file} (built ${new Date(indexBuiltAt).toISOString()})`)
       break
     } catch (err) {
-      console.error(`failed to read search index ${file}`, err)
+      console.log(`search index ${file} unreadable: ${String(err)}`)
     }
   }
   if (!indexSource) {
-    console.error('no search index found — search stays empty until one is built')
-    applyIndex(null)
+    console.log('search index: none found — search disabled until one is built')
+    return
   }
-  if (!indexSource || Date.now() - indexBuiltAt > INDEX_TTL_MS) {
-    if (process.env.WB_INDEX_REFRESH === 'off') {
-      console.log('search index missing/stale but WB_INDEX_REFRESH=off — not refreshing')
-    } else {
-      const age = indexSource ? `${Math.round((Date.now() - indexBuiltAt) / 3.6e6)}h old` : 'missing'
-      console.log(`search index ${age} — refreshing in background`)
-      setTimeout(() => refreshIndex().catch((err) => console.error('index refresh failed', err)), 0)
-    }
+  const age = Date.now() - indexBuiltAt
+  if (age > INDEX_TTL_MS) {
+    const hours = Math.round(age / 3.6e6)
+    console.log(`search index is ${hours}h old (ttl ${INDEX_TTL_MS / 3.6e6}h) — refreshing`)
+    refreshIndex().catch((err) => console.log(`index refresh failed: ${String(err)}`))
   }
 }
 
-// Rebuild from upstream and swap in atomically. Single-flight, non-blocking:
-// requests keep using the current index (seed or last good refresh) meanwhile.
-async function refreshIndex() {
+// Background rebuild; concurrent requests keep serving the current index.
+async function refreshIndex(): Promise<void> {
   if (refreshing) return
   refreshing = true
   try {
@@ -125,7 +126,12 @@ async function refreshIndex() {
 }
 loadSearchIndex()
 
-async function externalCached(key, parse, makeUrl, ttlMs) {
+async function externalCached(
+  key: string,
+  parse: (text: string) => any,
+  makeUrl: () => string,
+  ttlMs: number
+): Promise<any> {
   const cached = cache.get(key)
   if (cached !== undefined) return cached
   const text = await fetchExternal(makeUrl())
@@ -134,7 +140,7 @@ async function externalCached(key, parse, makeUrl, ttlMs) {
   return result
 }
 
-function json(res, status, body) {
+function json(res: http.ServerResponse, status: number, body: unknown): void {
   const data = JSON.stringify(body)
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
@@ -144,11 +150,16 @@ function json(res, status, body) {
   res.end(data)
 }
 
-function badRequest(res, message) {
+function badRequest(res: http.ServerResponse, message: string): void {
   json(res, 400, { error: message })
 }
 
-async function upstreamCached(key, parse, makePath, ttlMs) {
+async function upstreamCached(
+  key: string,
+  parse: (html: string) => any,
+  makePath: () => string,
+  ttlMs: number
+): Promise<any> {
   const cached = cache.get(key)
   if (cached !== undefined) return cached
   const html = await fetchUpstream(makePath())
@@ -157,7 +168,7 @@ async function upstreamCached(key, parse, makePath, ttlMs) {
   return result
 }
 
-const MIME = {
+const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -169,9 +180,9 @@ const MIME = {
   '.txt': 'text/plain; charset=utf-8',
 }
 
-async function serveStatic(req, res) {
+async function serveStatic(req: http.IncomingMessage, res: http.ServerResponse): Promise<boolean> {
   if (!existsSync(DIST)) return false
-  let urlPath = decodeURIComponent(new URL(req.url, 'http://x').pathname)
+  let urlPath = decodeURIComponent(new URL(req.url || '/', 'http://x').pathname)
   if (urlPath === '/') urlPath = '/index.html'
   let filePath = path.join(DIST, urlPath)
   if (!filePath.startsWith(DIST)) return false
@@ -191,7 +202,7 @@ async function serveStatic(req, res) {
   return true
 }
 
-async function serveSpaFallback(req, res) {
+async function serveSpaFallback(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const filePath = path.join(DIST, 'index.html')
   try {
     const body = await readFile(filePath)
@@ -203,12 +214,11 @@ async function serveSpaFallback(req, res) {
 }
 
 const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, 'http://x')
+  const url = new URL(req.url || '/', 'http://x')
   const t0 = Date.now()
   res.on('finish', () => {
     console.log(`${req.method} ${url.pathname}${url.search.slice(0, 80)} -> ${res.statusCode} (${Date.now() - t0}ms) client=${req.headers['x-forwarded-for'] || req.socket.remoteAddress || '-'}`)
   })
-
 
   if (url.pathname === '/api/search-all') {
     const q = (url.searchParams.get('q') || '').trim()
@@ -217,10 +227,10 @@ const server = http.createServer(async (req, res) => {
       const ql = q.toLowerCase()
       const words = ql.split(/\s+/).filter(Boolean)
       const limit = Math.min(Number(url.searchParams.get('limit')) || 50, 200)
-      const results = []
-      const seen = new Set()
+      const results: any[] = []
+      const seen = new Set<string>()
 
-      function scoreLocality(l) {
+      function scoreLocality(l: Locality): number {
         const name = String(l.n || l.name || '').toLowerCase()
         const ctx = (l.c || []).join(' ').toLowerCase()
         let sc = 0
@@ -239,7 +249,7 @@ const server = http.createServer(async (req, res) => {
         results.push({ type: 'locality', slug: l.s, name: l.n || l.name, qualifier: l.qualifier || null, ctx: l.c, score: sc })
         if (results.length >= limit * 2) break
       }
-      function scoreStop(st) {
+      function scoreStop(st: Stop): number {
         if (st.na && String(st.na).toLowerCase() === ql) return 190
         const label = String(st.l || st.label || '').toLowerCase()
         const ctx = (st.c || []).join(' ').toLowerCase()
@@ -281,7 +291,7 @@ const server = http.createServer(async (req, res) => {
       results.sort((a, b) => b.score - a.score)
       return json(res, 200, { results: results.slice(0, limit), query: q })
     } catch (err) {
-      return json(res, 502, { error: String(err && err.message || err) })
+      return json(res, 502, { error: String((err && (err as Error).message) || err) })
     }
   }
 
@@ -290,7 +300,7 @@ const server = http.createServer(async (req, res) => {
     if (!q) return badRequest(res, 'missing q')
     try {
       const words = q.split(/\s+/).filter(Boolean)
-      let localities = []
+      let localities: any[] = []
       let used = q
       for (let n = words.length; n > 0 && !localities.length; n--) {
         used = words.slice(0, n).join(' ')
@@ -300,7 +310,7 @@ const server = http.createServer(async (req, res) => {
       }
       return json(res, 200, { localities, query: used, note: used !== q ? `No exact match for “${q}” — showing “${used}”.` : null })
     } catch (err) {
-      return json(res, 502, { error: String(err && err.message || err) })
+      return json(res, 502, { error: String((err && (err as Error).message) || err) })
     }
   }
 
@@ -312,7 +322,7 @@ const server = http.createServer(async (req, res) => {
       const { __parsed } = await upstreamCached(key, parseLocality, () => `/localities/${encodeURIComponent(slug)}`, TTL.locality)
       return json(res, 200, { slug, ...__parsed })
     } catch (err) {
-      return json(res, 502, { error: String(err && err.message || err) })
+      return json(res, 502, { error: String((err && (err as Error).message) || err) })
     }
   }
 
@@ -326,7 +336,7 @@ const server = http.createServer(async (req, res) => {
       )
       return json(res, 200, { atco, ...__parsed })
     } catch (err) {
-      return json(res, 502, { error: String(err && err.message || err) })
+      return json(res, 502, { error: String((err && (err as Error).message) || err) })
     }
   }
 
@@ -336,7 +346,7 @@ const server = http.createServer(async (req, res) => {
       .map((s) => s.trim())
       .filter(Boolean)
     if (!atcos.length) return badRequest(res, 'missing atco')
-    const ctx = {}
+    const ctx: Record<string, string[]> = {}
     for (const a of atcos) ctx[a] = stopCtx.get(a) || []
     return json(res, 200, { ctx })
   }
@@ -349,13 +359,13 @@ const server = http.createServer(async (req, res) => {
       const { __parsed } = await upstreamCached(
         key, parseServiceStops, () => `/services/${encodeURIComponent(slug)}`, TTL.serviceStops
       )
-      const directions = (__parsed?.directions || []).map((d) => ({
+      const directions = (__parsed?.directions || []).map((d: any) => ({
         ...d,
-        stops: (d.stops || []).map((s) => ({ ...s, locality: stopLocality.get(s.atco) || null })),
+        stops: (d.stops || []).map((s: any) => ({ ...s, locality: stopLocality.get(s.atco) || null })),
       }))
       return json(res, 200, { slug, ...__parsed, directions })
     } catch (err) {
-      return json(res, 502, { error: String(err && err.message || err) })
+      return json(res, 502, { error: String((err && (err as Error).message) || err) })
     }
   }
 
@@ -364,11 +374,13 @@ const server = http.createServer(async (req, res) => {
     if (!atco) return badRequest(res, 'missing atco')
     const key = `d:${atco}`
     try {
-      const { __parsed } = await upstreamCached(key, parseDepartures, () => `/stops/${encodeURIComponent(atco)}`, TTL.departures)
+      const { __parsed } = await upstreamCached(
+        key, parseDepartures, () => `/stops/${encodeURIComponent(atco)}`, TTL.departures
+      )
       if (!__parsed) return json(res, 200, { atco, departures: [] })
       return json(res, 200, { atco, ...__parsed })
     } catch (err) {
-      return json(res, 502, { error: String(err && err.message || err) })
+      return json(res, 502, { error: String((err && (err as Error).message) || err) })
     }
   }
 
@@ -385,18 +397,18 @@ const server = http.createServer(async (req, res) => {
       )
       if (!parsed?.stops?.length) return json(res, 200, { slug, directions: {} })
 
-      const dirs = {}
+      const dirs: Record<string, Record<string, string[]>> = {}
       for (const s of parsed.stops) {
         try {
           const { __parsed: dep } = await upstreamCached(
             `d:${s.atco}`, parseDepartures, () => `/stops/${encodeURIComponent(s.atco)}`, TTL.departures
           )
-          const lines = {}
+          const lines: Record<string, Set<string>> = {}
           for (const d of dep?.departures || []) {
             if (!d.line || !d.destination) continue
             ;(lines[d.line] ??= new Set()).add(d.destination)
           }
-          const out = {}
+          const out: Record<string, string[]> = {}
           for (const [line, ds] of Object.entries(lines)) out[line] = [...ds].filter(Boolean)
           if (Object.keys(out).length) dirs[s.atco] = out
         } catch {
@@ -407,7 +419,7 @@ const server = http.createServer(async (req, res) => {
       cache.set(key, { __parsed: dirs }, TTL.directions)
       return json(res, 200, { slug, directions: dirs })
     } catch (err) {
-      return json(res, 502, { error: String(err && err.message || err) })
+      return json(res, 502, { error: String((err && (err as Error).message) || err) })
     }
   }
 
@@ -428,7 +440,7 @@ const server = http.createServer(async (req, res) => {
       )
       return json(res, 200, { lat, lon, ...__parsed })
     } catch (err) {
-      return json(res, 502, { error: String(err && err.message || err) })
+      return json(res, 502, { error: String((err && (err as Error).message) || err) })
     }
   }
 
@@ -451,6 +463,4 @@ const server = http.createServer(async (req, res) => {
   await serveSpaFallback(req, res)
 })
 
-server.listen(PORT, () => {
-  console.log(`three@once server on :${PORT} (static: ${existsSync(DIST) ? 'dist' : 'none'})`)
-})
+server.listen(PORT, () => console.log(`three@once server on :${PORT} (static: dist)`))

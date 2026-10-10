@@ -16,4 +16,4 @@ COPY --from=build /app/server ./server
 COPY --from=build /app/dist ./dist
 EXPOSE 4848
 USER node
-CMD ["node", "server/server.mjs"]
+CMD ["node", "--experimental-strip-types", "server/server.ts"]

@@ -26,6 +26,8 @@ import { pipeline } from 'node:stream/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import type { Locality, SearchIndex, Stop } from './types.ts'
+
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url))
 
 const NAPTAN_URL = 'https://naptan.api.dft.gov.uk/v1/access-nodes?dataFormat=csv'
@@ -36,7 +38,13 @@ const UA = 'three-at-once/0.1 (+https://github.com/plmeister/three-at-once)'
 const DATA_DIR = process.env.WB_DATA_DIR || path.join(SERVER_DIR, '..', 'data')
 const DATA_TTL_MS = Number(process.env.WB_DATA_TTL_HOURS || 24) * 60 * 60 * 1000
 
-function slugify(s) {
+type Log = (msg: string) => void
+interface NptgData {
+  localities: Locality[]
+  byCode: Map<string, Locality>
+}
+
+function slugify(s: string): string {
   return String(s)
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
@@ -48,10 +56,10 @@ function slugify(s) {
 
 // Minimal streaming RFC4180 CSV reader: async-iterates rows of string fields,
 // handling quoted fields (embedded commas/newlines) and CRLF.
-async function* parseCsv(source) {
+async function* parseCsv(source: AsyncIterable<Uint8Array>): AsyncGenerator<string[]> {
   const dec = new TextDecoder('utf-8')
   let field = ''
-  let row = []
+  let row: string[] = []
   let inQuotes = false
   for await (const chunk of source) {
     const s = dec.decode(chunk, { stream: true })
@@ -59,32 +67,41 @@ async function* parseCsv(source) {
       const ch = s[i]
       if (inQuotes) {
         if (ch === '"') {
-          if (s[i + 1] === '"') { field += '"'; i++ } else inQuotes = false
+          if (s[i + 1] === '"') {
+            field += '"'
+            i++
+          } else inQuotes = false
         } else field += ch
       } else if (ch === '"') {
         inQuotes = true
       } else if (ch === ',') {
-        row.push(field); field = ''
+        row.push(field)
+        field = ''
       } else if (ch === '\n') {
-        row.push(field); field = ''
-        yield row; row = []
+        row.push(field)
+        field = ''
+        yield row
+        row = []
       } else if (ch !== '\r') {
         field += ch
       }
     }
   }
   field += dec.decode()
-  if (field.length || row.length) { row.push(field); yield row }
+  if (field.length || row.length) {
+    row.push(field)
+    yield row
+  }
 }
 
-function headerIndex(header) {
-  const idx = new Map()
+function headerIndex(header: string[]): Map<string, number> {
+  const idx = new Map<string, number>()
   header.forEach((name, i) => idx.set(name.trim().replace(/^\uFEFF/, ''), i))
   return idx
 }
 
 // Download to a cached file unless a recent copy already exists.
-async function ensureCsv(url, file, log) {
+async function ensureCsv(url: string, file: string, log: Log): Promise<void> {
   if (existsSync(file) && Date.now() - statSync(file).mtimeMs < DATA_TTL_MS) {
     log(`cached ${path.basename(file)} (${(statSync(file).size / 1e6).toFixed(1)} MB)`)
     return
@@ -94,22 +111,25 @@ async function ensureCsv(url, file, log) {
   if (!res.ok || !res.body) throw new Error(`GET ${url} -> HTTP ${res.status}`)
   await mkdir(path.dirname(file), { recursive: true })
   const tmp = `${file}.tmp`
-  await pipeline(Readable.fromWeb(res.body), createWriteStream(tmp))
+  await pipeline(Readable.fromWeb(res.body as import('node:stream/web').ReadableStream), createWriteStream(tmp))
   await rename(tmp, file)
   log(`saved ${path.basename(file)} (${(statSync(file).size / 1e6).toFixed(1)} MB)`)
 }
 
 // NPTG → locality table + code index. `c` is the display breadcrumb.
-async function loadNptg(log) {
+async function loadNptg(log: Log): Promise<NptgData> {
   const file = path.join(DATA_DIR, 'nptg-localities.csv')
   await ensureCsv(NPTG_URL, file, log)
-  const localities = []
-  const byCode = new Map()
-  const usedSlugs = new Set()
-  let header = null
+  const localities: Locality[] = []
+  const byCode = new Map<string, Locality>()
+  const usedSlugs = new Set<string>()
+  let header: Map<string, number> | null = null
   let rows = 0
   for await (const row of parseCsv(createReadStream(file))) {
-    if (!header) { header = headerIndex(row); continue }
+    if (!header) {
+      header = headerIndex(row)
+      continue
+    }
     const code = row[header.get('NptgLocalityCode')]
     const name = (row[header.get('LocalityName')] || '').trim()
     if (!code || !name) continue
@@ -121,8 +141,8 @@ async function loadNptg(log) {
     let n = 2
     while (usedSlugs.has(s)) s = `${base}-${n++}`
     usedSlugs.add(s)
-    const c = [name, parent, qualifier].filter((v, i, a) => v && a.indexOf(v) === i)
-    const entry = { s, n: name, c, qualifier }
+    const c = [name, parent, qualifier].filter((v, i, a) => v && a.indexOf(v) === i) as string[]
+    const entry: Locality = { s, n: name, c, qualifier }
     localities.push(entry)
     byCode.set(code, entry)
     rows++
@@ -132,16 +152,19 @@ async function loadNptg(log) {
 }
 
 // NaPTAN → stops (active bus/coach), joined to NPTG localities.
-async function loadNaptan(log, nptg) {
+async function loadNaptan(log: Log, nptg: NptgData): Promise<{ stops: Stop[]; extraLocalities: Locality[] }> {
   const file = path.join(DATA_DIR, 'naptan.csv')
   await ensureCsv(NAPTAN_URL, file, log)
-  const stops = []
-  const usedSlugs = new Set(nptg.localities.map((l) => l.s))
-  const synthesized = new Map() // locality name → entry, for NaPTAN codes missing from NPTG
-  let header = null
+  const stops: Stop[] = []
+  const usedSlugs = new Set<string>(nptg.localities.map((l) => l.s))
+  const synthesized = new Map<string, Locality>() // locality name → entry, for NaPTAN codes missing from NPTG
+  let header: Map<string, number> | null = null
   let rows = 0
   for await (const row of parseCsv(createReadStream(file))) {
-    if (!header) { header = headerIndex(row); continue }
+    if (!header) {
+      header = headerIndex(row)
+      continue
+    }
     if (row[header.get('StopType')] !== 'BCT') continue
     if (row[header.get('Status')] !== 'active') continue
     const a = (row[header.get('ATCOCode')] || '').trim()
@@ -163,9 +186,12 @@ async function loadNaptan(log, nptg) {
     const na = (row[header.get('NaptanCode')] || '').trim()
     const lon = Number(row[header.get('Longitude')])
     const lat = Number(row[header.get('Latitude')])
-    const stop = { a, l: (row[header.get('CommonName')] || '').trim(), s: loc?.s || null, c: loc?.c || [] }
+    const stop: Stop = { a, l: (row[header.get('CommonName')] || '').trim(), s: loc?.s || null, c: loc?.c || [] }
     if (na) stop.na = na
-    if (Number.isFinite(lon) && Number.isFinite(lat)) { stop.x = lon; stop.y = lat }
+    if (Number.isFinite(lon) && Number.isFinite(lat)) {
+      stop.x = lon
+      stop.y = lat
+    }
     stops.push(stop)
     rows++
   }
@@ -173,11 +199,7 @@ async function loadNaptan(log, nptg) {
   return { stops, extraLocalities: [...synthesized.values()] }
 }
 
-/**
- * @param {object} [opts]
- * @param {(msg: string) => void} [opts.log]
- */
-export async function buildIndex({ log = () => {} } = {}) {
+export async function buildIndex({ log = () => {} }: { log?: Log } = {}): Promise<SearchIndex> {
   const nptg = await loadNptg(log)
   const { stops, extraLocalities } = await loadNaptan(log, nptg)
   const localities = [...nptg.localities, ...extraLocalities]
@@ -185,7 +207,7 @@ export async function buildIndex({ log = () => {} } = {}) {
   return { builtAt: new Date().toISOString(), localities, stops }
 }
 
-export async function writeIndexGz(index, outPath) {
+export async function writeIndexGz(index: SearchIndex, outPath: string): Promise<number> {
   const tmp = `${outPath}.tmp`
   const json = JSON.stringify({ builtAt: index.builtAt, localities: index.localities, stops: index.stops })
   await pipeline(Readable.from([json]), createGzip({ level: 9 }), createWriteStream(tmp))
@@ -193,14 +215,16 @@ export async function writeIndexGz(index, outPath) {
   return json.length
 }
 
-async function main() {
+async function main(): Promise<SearchIndex> {
   const args = process.argv.slice(2)
   const outIdx = args.indexOf('--out')
   const outPath = outIdx !== -1 ? path.resolve(args[outIdx + 1]) : path.join(SERVER_DIR, 'search-index.json.gz')
   const t0 = Date.now()
   const index = await buildIndex({ log: (m) => console.log(`[index] ${m}`) })
   const bytes = await writeIndexGz(index, outPath)
-  console.log(`wrote ${outPath} (${(bytes / 1e6).toFixed(1)} MB raw, ${index.stops.length} stops) in ${((Date.now() - t0) / 1000).toFixed(0)}s`)
+  console.log(
+    `wrote ${outPath} (${(bytes / 1e6).toFixed(1)} MB raw, ${index.stops.length} stops) in ${((Date.now() - t0) / 1000).toFixed(0)}s`
+  )
   return index
 }
 

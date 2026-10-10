@@ -1,14 +1,26 @@
+import type {
+  Departure,
+  Departures,
+  Direction,
+  LocalityStops,
+  Nearby,
+  SearchEntry,
+  Service,
+  ServiceStops,
+  StopRef,
+  StopServices,
+} from './types.ts'
+
 const BASE = 'https://bustimes.org'
 const BUSES_REFERER = 'https://bustimes.org/'
-const UA =
-  'three-at-once/0.1 (local bus-times app; rate-limited, cached)'
+const UA = 'three-at-once/0.1 (local bus-times app; rate-limited, cached)'
 const MIN_GAP_MS = Number(process.env.UPSTREAM_GAP_MS || 300)
 const TIMEOUT_MS = 15000
 
 let lastUpstreamAt = 0
-let upstreamTail = Promise.resolve()
+let upstreamTail: Promise<unknown> = Promise.resolve()
 
-function throttle() {
+function throttle(): Promise<unknown> {
   const gap = () => {
     const wanted = lastUpstreamAt + MIN_GAP_MS - Date.now()
     lastUpstreamAt = Date.now()
@@ -19,8 +31,8 @@ function throttle() {
   return next
 }
 
-export async function fetchUpstream(path, { retries = 1 } = {}) {
-  let lastErr
+export async function fetchUpstream(path: string, { retries = 1 }: { retries?: number } = {}): Promise<string> {
+  let lastErr: unknown
   for (let attempt = 0; attempt <= retries; attempt++) {
     await throttle()
     const ctrl = new AbortController()
@@ -50,7 +62,7 @@ export async function fetchUpstream(path, { retries = 1 } = {}) {
   throw lastErr || new Error(`upstream failed for ${path}`)
 }
 
-function stripTags(html) {
+function stripTags(html: string): string {
   return html
     .replace(/<[^>]+>/g, ' ')
     .replace(/&shy;/g, '')
@@ -63,15 +75,9 @@ function stripTags(html) {
     .trim()
 }
 
-function extractTag(html, name, { strict = false } = {}) {
-  const re = new RegExp(`<${name}[^>]*>(.*?)</${name}\\s*>`, 's')
-  const m = html.match(re)
-  return m ? m[1] : strict ? '' : html
-}
-
-export function parseSearch(html) {
-  const localities = []
-  const seen = new Set()
+export function parseSearch(html: string): SearchEntry[] {
+  const localities: SearchEntry[] = []
+  const seen = new Set<string>()
   for (const m of html.matchAll(/<li>\s*<a href="\/localities\/([^"]+)"[^>]*>([\s\S]*?)<\/a>/g)) {
     if (seen.has(m[1])) continue
     seen.add(m[1])
@@ -88,8 +94,8 @@ export function parseSearch(html) {
   return localities
 }
 
-export function parseLocality(html) {
-  const stops = []
+export function parseLocality(html: string): LocalityStops {
+  const stops: StopRef[] = []
   for (const m of html.matchAll(/<li>\s*<a href="\/stops\/([0-9A-Za-z]+)"[^>]*>([\s\S]*?)<\/a>/g)) {
     const span = m[2].match(/<span>([\s\S]*?)<\/span>/)
     const label = stripTags(span ? span[1] : m[2])
@@ -106,7 +112,7 @@ export function parseLocality(html) {
   return { stops }
 }
 
-function splitClosingDiv(html, openPos) {
+function splitClosingDiv(html: string, openPos: number): string | null {
   let depth = 1
   let i = openPos
   while (depth > 0) {
@@ -124,8 +130,8 @@ function splitClosingDiv(html, openPos) {
   return html.slice(openPos, i)
 }
 
-function rowCells(rowHtml) {
-  const cells = []
+function rowCells(rowHtml: string): string[] {
+  const cells: string[] = []
   let pos = 0
   while (pos < rowHtml.length) {
     const open = rowHtml.indexOf('<td', pos)
@@ -138,14 +144,14 @@ function rowCells(rowHtml) {
   return cells
 }
 
-export function parseStopServices(html) {
+export function parseStopServices(html: string): StopServices {
   const blockMatch = html.match(/<h2>[^<]*services[^<]*<\/h2>([\s\S]*?)<\/ul>/i)
   if (!blockMatch) return { services: [] }
   const block = blockMatch[1]
   const ulPos = block.indexOf('<ul class="has-smalls">')
   const region = ulPos === -1 ? block : block.slice(ulPos)
-  const services = []
-  const seen = new Set()
+  const services: Service[] = []
+  const seen = new Set<string>()
   for (const m of region.matchAll(/<li>\s*<a href="\/services\/([^"]+)"[^>]*>([\s\S]*?)<\/a>/g)) {
     if (seen.has(m[1])) continue
     seen.add(m[1])
@@ -159,7 +165,9 @@ export function parseStopServices(html) {
       headline: descSpan ? stripTags(descSpan[1]) : null,
       operators: opSmall
         ? stripTags(opSmall[1])
-            .split(',').map((s) => s.trim()).filter(Boolean)
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
         : [],
     })
   }
@@ -171,8 +179,8 @@ export function parseStopServices(html) {
 // keeps variant journeys under one heading from overwriting each other.
 const STOP_ROW_RE = /<tr[^>]*>([\s\S]*?)<\/tr>/g
 
-function parseStopRows(tableHtml) {
-  const stops = []
+function parseStopRows(tableHtml: string): { atco: string; name: string; times: string[] }[] {
+  const stops: { atco: string; name: string; times: string[] }[] = []
   for (const row of tableHtml.matchAll(STOP_ROW_RE)) {
     const link = row[1].match(/<a href="\/stops\/([0-9A-Za-z]+)">([^<]*)<\/a>/)
     if (!link) continue
@@ -185,17 +193,17 @@ function parseStopRows(tableHtml) {
   return stops
 }
 
-export function parseServiceStops(html) {
+export function parseServiceStops(html: string): ServiceStops {
   const calendar =
     html.match(/<option selected[^>]*>([\s\S]*?)<\/option>/)?.[1]?.replace(/\s+/g, ' ').trim() || null
-  const byName = new Map()
+  const byName = new Map<string | null, { name: string | null; stops: ReturnType<typeof parseStopRows>; seen: Set<string> }>()
   for (const chunk of html.split('<div class="grouping"').slice(1)) {
     const table = chunk.match(/<table class="timetable">([\s\S]*?)<\/table>/)
     if (!table) continue
     const stops = parseStopRows(table[1])
     if (!stops.length) continue
     const name = stripTags(chunk.match(/<h2[^>]*>([\s\S]*?)<\/h2>/)?.[1] || '') || null
-    const dir = byName.get(name) || { name, stops: [], seen: new Set() }
+    const dir = byName.get(name) || { name, stops: [], seen: new Set<string>() }
     for (const s of stops) {
       if (dir.seen.has(s.atco)) continue
       dir.seen.add(s.atco)
@@ -209,18 +217,19 @@ export function parseServiceStops(html) {
   }
 }
 
-function cellTime(cellHtml) {
+function cellTime(cellHtml: string | undefined | null): string | null {
   if (!cellHtml) return null
   const m = cellHtml.match(/(\d{1,2}:\d{2})\s*</)
   return m ? m[1] : null
 }
 
-function firstHref(cellHtml) {
+function firstHref(cellHtml: string | undefined): string | null {
+  if (!cellHtml) return null
   const m = cellHtml.match(/href="([^"]+)"/)
   return m ? m[1] : null
 }
 
-export function parseDepartures(html) {
+export function parseDepartures(html: string): Departures | null {
   const asidePos = html.indexOf('<div class="aside" id="departures">')
   if (asidePos === -1) return null
   const segment = splitClosingDiv(html, asidePos)
@@ -233,8 +242,8 @@ export function parseDepartures(html) {
   const hasLive = headers.some((h) => /^exp/i.test(h))
   const hasBay = headers.some((h) => /^stand|^stance|^bay|^stop/i.test(h))
 
-  const rows = []
-  let date = null
+  const rows: Departure[] = []
+  let date: string | null = null
   for (const part of segment.split('<h3>').slice(1)) {
     const h3 = part.slice(0, part.indexOf('</h3>'))
     const m = h3.match(/(\d{1,2} \w+ \d{4})/)
@@ -251,13 +260,13 @@ export function parseDepartures(html) {
     const serviceUrl = firstHref(lineCell) || null
 
     const dest = stripTags(destCell).replace(/ \d{2,5} - [A-Z]{2}\d{2} [A-Z]{3}$/, '')
-    let bay = null
+    let bay: string | null = null
     if (hasBay && cells.length > 3) bay = stripTags(cells[cells.length - 1])
     const bi = stripTags(destCell.match(/<div class="vehicle">([\s\S]*?)<\/div>/)?.[1] || '')
     const vehicle = bi || null
 
-    let sched = null
-    let expected = null
+    let sched: string | null = null
+    let expected: string | null = null
     let cancelled = false
     if (hasSched && cells.length > 2) {
       const sc = cells[2]
@@ -291,8 +300,12 @@ export function parseDepartures(html) {
   }
 }
 
-export async function fetchExternal(url, { retries = 1 } = {}, headers = {}) {
-  let lastErr
+export async function fetchExternal(
+  url: string,
+  { retries = 1 }: { retries?: number } = {},
+  headers: Record<string, string> = {}
+): Promise<string> {
+  let lastErr: unknown
   for (let attempt = 0; attempt <= retries; attempt++) {
     await throttle()
     const ctrl = new AbortController()
@@ -327,35 +340,37 @@ export async function fetchExternal(url, { retries = 1 } = {}, headers = {}) {
   throw lastErr || new Error('external fetch failed')
 }
 
-export function parseNearby(jsonText) {
+export function parseNearby(jsonText: string): Nearby {
   const j = JSON.parse(jsonText)
   const a = j.address || {}
   const order = ['town', 'city', 'village', 'hamlet', 'suburb', 'neighbourhood', 'municipality', 'county_town']
-  const names = []
+  const names: string[] = []
   for (const k of order) {
     if (a[k] && !names.includes(a[k])) names.push(a[k])
   }
   if (j.name && !names.includes(j.name)) names.push(j.name)
   return {
     names: names.slice(0, 4),
-    label: (j.display_name || '').split(',')[0] || (names[0] || ''),
+    label: (j.display_name || '').split(',')[0] || names[0] || '',
     lat: j.lat ? Number(j.lat) : null,
     lon: j.lon ? Number(j.lon) : null,
   }
 }
 
 export const scrapers = {
-  search: { parse: parseSearch, path: (q) => `/search?q=${encodeURIComponent(q)}` },
+  search: { parse: parseSearch, path: (q: string) => `/search?q=${encodeURIComponent(q)}` },
   locality: {
     parse: parseLocality,
-    path: (slug) => `/localities/${encodeURIComponent(slug)}`,
+    path: (slug: string) => `/localities/${encodeURIComponent(slug)}`,
   },
   departures: {
     parse: parseDepartures,
-    path: (atco) => `/stops/${encodeURIComponent(atco)}`,
+    path: (atco: string) => `/stops/${encodeURIComponent(atco)}`,
   },
   serviceStops: {
     parse: parseServiceStops,
-    path: (slug) => `/services/${encodeURIComponent(slug)}`,
+    path: (slug: string) => `/services/${encodeURIComponent(slug)}`,
   },
 }
+
+export type { Direction, Service }

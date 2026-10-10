@@ -179,7 +179,7 @@ their robots.txt.
   won't appear. Where a service publishes variant journeys under one heading,
   their stops are merged in service order; duplicate stops are dropped.
 - Scrapes HTML — upstream layout changes can break parsing
-  (`server/scrape.mjs`).
+  (`server/scrape.ts`).
 
 ## Test
 

@@ -1,8 +1,22 @@
 import { DatabaseSync } from 'node:sqlite'
 
-export function createCache(maxEntries = 500, { file = null } = {}) {
-  const store = new Map()
-  let db = null
+interface CacheRecord {
+  value: any
+  expires: number
+}
+
+export interface Cache {
+  get(key: string): any
+  set(key: string, value: unknown, ttlMs: number): void
+  readonly size: number
+}
+
+export function createCache(
+  maxEntries = 500,
+  { file = null }: { file?: string | null } = {}
+): { get(key: string): any; set(key: string, value: unknown, ttlMs: number): void; readonly size: number } {
+  const store = new Map<string, CacheRecord>()
+  let db: DatabaseSync | null = null
   if (file) {
     try {
       db = new DatabaseSync(file)
@@ -14,14 +28,16 @@ export function createCache(maxEntries = 500, { file = null } = {}) {
     }
   }
 
-  function expired(value) {
+  function expired(value: CacheRecord): boolean {
     return Date.now() > value.expires
   }
 
-  function fromDb(key) {
+  function fromDb(key: string): { value: any; expires: number } | undefined {
     if (!db) return undefined
     try {
-      const row = db.prepare('SELECT expires, value FROM cache WHERE k = ?').get(key)
+      const row = db.prepare('SELECT expires, value FROM cache WHERE k = ?').get(key) as
+        | { expires: number; value: string }
+        | undefined
       if (!row) return undefined
       const ttl = row.expires - Date.now()
       if (ttl <= 0) {
@@ -38,7 +54,7 @@ export function createCache(maxEntries = 500, { file = null } = {}) {
     if (!db) return
     try {
       db.prepare('DELETE FROM cache WHERE expires <= ?').run(Date.now())
-      const { n } = db.prepare('SELECT COUNT(*) AS n FROM cache').get()
+      const { n } = db.prepare('SELECT COUNT(*) AS n FROM cache').get() as { n: number }
       if (n >= maxEntries) {
         db.prepare(
           'DELETE FROM cache WHERE k IN (SELECT k FROM cache ORDER BY expires ASC LIMIT ?)'
@@ -50,7 +66,7 @@ export function createCache(maxEntries = 500, { file = null } = {}) {
   }
 
   return {
-    get(key) {
+    get(key: string) {
       const hit = store.get(key)
       if (hit) {
         if (expired(hit)) {
@@ -63,12 +79,12 @@ export function createCache(maxEntries = 500, { file = null } = {}) {
       if (fromDisk) store.set(key, fromDisk)
       return fromDisk?.value
     },
-    set(key, value, ttlMs) {
+    set(key: string, value: unknown, ttlMs: number) {
       if (store.size >= maxEntries) {
         const oldest = [...store.entries()].sort((a, b) => a[1].expires - b[1].expires)[0]
         store.delete(oldest[0])
       }
-      const rec = { value, expires: Date.now() + ttlMs }
+      const rec: CacheRecord = { value, expires: Date.now() + ttlMs }
       store.set(key, rec)
       // only durable data (static info / everything that isn't a live feed) goes to disk;
       // short-TTL entries like departures stay in memory to avoid SQLite write churn
@@ -79,15 +95,18 @@ export function createCache(maxEntries = 500, { file = null } = {}) {
               'ON CONFLICT(k) DO UPDATE SET expires = excluded.expires, value = excluded.value'
           ).run(key, rec.expires, JSON.stringify(value))
         } catch {
-          /* value not JSON-safe or db error — memory copy still serves this process */
+          /* non-serialisable value or DB error — keep the in-memory copy */
         }
-        pruneDb()
       }
     },
     get size() {
-      return db
-        ? (db.prepare('SELECT COUNT(*) AS n FROM cache').get()?.n ?? store.size)
-        : store.size
+      if (!db) return store.size
+      try {
+        const { n } = db.prepare('SELECT COUNT(*) AS n FROM cache').get() as { n: number }
+        return n
+      } catch {
+        return store.size
+      }
     },
   }
 }
