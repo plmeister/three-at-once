@@ -7,9 +7,6 @@
 import { serviceStops } from './api.js'
 import { UPSTREAM_URL } from './config.js'
 
-const HOVER_DELAY_MS = 140
-const HOVER_LEAVE_MS = 260
-
 const cache = new Map() // slug -> { calendar, directions }
 const inflight = new Map()
 
@@ -17,19 +14,11 @@ let sheet = null
 let backdrop = null
 let anchor = null
 let pinned = false
-let openTimer = null
-let closeTimer = null
 let lastFocus = null
 let scrollLock = false
 
 function hoverCapable() {
   return typeof window.matchMedia === 'function' && window.matchMedia('(hover: hover)').matches
-}
-
-function stopTimers() {
-  clearTimeout(openTimer)
-  clearTimeout(closeTimer)
-  openTimer = closeTimer = null
 }
 
 function loadRoute(slug) {
@@ -64,13 +53,6 @@ function mount() {
       closeSheet()
     }
   })
-  // The card is interactive in hover mode too: keep it open while the pointer
-  // crosses from the route number into the list.
-  sheet.addEventListener('pointerenter', stopTimers)
-  sheet.addEventListener('pointerleave', (e) => {
-    if (e.pointerType === 'mouse') leaveRoute()
-  })
-
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && sheet && !sheet.hidden) closeSheet()
   })
@@ -298,7 +280,6 @@ function lockScroll(on) {
 async function open(opts, { trigger = 'tap', keepPinned = false } = {}) {
   const { slug, line, headline, fromAtcos, toAtcos, serviceUrl } = opts
   if (!slug) return
-  stopTimers()
   anchor = opts.anchor || anchor
   const el = mount()
   el.dataset.slug = slug
@@ -344,7 +325,6 @@ async function open(opts, { trigger = 'tap', keepPinned = false } = {}) {
 }
 
 function closeSheet({ restoreFocus = true } = {}) {
-  stopTimers()
   if (!sheet) return
   sheet.hidden = true
   backdrop.hidden = true
@@ -360,40 +340,10 @@ function close() {
   closeSheet()
 }
 
-export function hoverRoute(btn, opts) {
-  if (!hoverCapable()) return
-  if (sheet && !sheet.hidden && sheet.dataset.slug === opts.slug) return
-  stopTimers()
-  openTimer = setTimeout(() => open({ ...opts, anchor: btn }, { trigger: 'hover' }), HOVER_DELAY_MS)
-}
-
-export function leaveRoute() {
-  if (!sheet || !hoverCapable()) return
-  stopTimers()
-  closeTimer = setTimeout(() => {
-    if (!pinned && !sheet?.contains(document.activeElement)) closeSheet({ restoreFocus: false })
-  }, HOVER_LEAVE_MS)
-}
-
 export function tapRoute(btn, opts) {
   if (sheet && !sheet.hidden && sheet.dataset.slug === opts.slug) {
     closeSheet()
     return
   }
   open({ ...opts, anchor: btn }, { trigger: 'tap' })
-}
-
-// Keyboard focus lands on the route button; treat it like hover so tabbing
-// through the board reveals each route without a pointer.
-export function focusRoute(btn, opts) {
-  stopTimers()
-  open({ ...opts, anchor: btn }, { trigger: 'focus' })
-}
-
-export function blurRoute() {
-  if (pinned) return
-  stopTimers()
-  closeTimer = setTimeout(() => {
-    if (!sheet?.contains(document.activeElement)) closeSheet({ restoreFocus: false })
-  }, HOVER_LEAVE_MS)
 }

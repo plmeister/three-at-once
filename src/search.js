@@ -1,6 +1,7 @@
 import { searchLocalities, searchAll, localityStops, localityDirections, nearby, stopDepartures, stopServices } from './api.js'
 import { getState, getFavourites, removeFavourite, getGroups, resolveGroup } from './store.js'
 import { stopDirProfile, bestSharedLeg } from './routes.js'
+import { escapeHtml } from './html.js'
 
 let active = false
 let onPick = null
@@ -168,13 +169,6 @@ function itemMatches(it, w) {
     return bits.toLowerCase().includes(w)
   }
   return String(it.label || '').toLowerCase().includes(w)
-}
-
-function stopMatches(label, q) {
-  const l = String(label || '').toLowerCase()
-  const words = q.toLowerCase().split(/\s+/).filter(Boolean)
-  if (l.includes(q.toLowerCase())) return true
-  return words.every((w) => l.includes(w))
 }
 
 // "same street, opposite kerbs": "Cottingham King Street ↑" / "… ↓", and the
@@ -716,12 +710,4 @@ async function locateMe() {
     btn.disabled = false
     btn.textContent = oldText
   }
-}
-
-function escapeHtml(s) {
-  return String(s ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
 }

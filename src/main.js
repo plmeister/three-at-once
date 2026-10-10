@@ -3,6 +3,7 @@ import { getState, setOrigin, setToStop, setDestination, setOperator, clearOrigi
 import { bootBoard, setReplaceOriginHandler } from './board.js'
 import { openSearch, initSearch, closeSearch } from './search.js'
 import { initManage, openManage } from './manage.js'
+import { escapeHtml } from './html.js'
 
 registerSW({
   immediate: true,
@@ -151,14 +152,6 @@ function favChip(f, i) {
     <span class="fav-go">★ ${glyph} ${escapeHtml(f.label)}</span>
     <span class="fav-x" title="Remove">✕</span>
   </button>`
-}
-
-function escapeHtml(s) {
-  return String(s ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
 }
 
 function firstRun(stop) {

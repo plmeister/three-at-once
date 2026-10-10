@@ -2,12 +2,13 @@ import { MAX_DEPARTURES, REFRESH_MS, STALE_MS } from './config.js'
 import { stopDepartures, stopServices, serviceStops, stopCtx } from './api.js'
 import {
   getState, setOrigin, setDestination, setToStop, setOperator, clearOrigin,
-  buildShareUrl, addFavourite, removeFavourite, isFavourite, toggleFavourite,
+  buildShareUrl, isFavourite, toggleFavourite,
   getFavJourneys, isFavJourney, saveFavouriteJourney, removeFavJourney, journeyKey,
 } from './store.js'
 import { stopDirProfile, legVerdict, DIR } from './routes.js'
 import { openSearch } from './search.js'
 import { tapRoute } from './route-sheet.js'
+import { escapeHtml } from './html.js'
 
 let lastLoadedAt = 0
 let timer = null
@@ -25,9 +26,7 @@ let replaceOriginFn = null // set by main.js so the origin panel can reopen the 
 
 export function setReplaceOriginHandler(fn) { replaceOriginFn = fn }
 let fareOps = new Set() // operator names serving the board (origin + via destination)
-let lineFilter = null // { slug, line } — narrows the board to one service
 let originServices = [] // every service calling at the origin stop
-let svcOpen = false // is the "services here" panel expanded?
 const stopServicesCache = new Map() // atco -> services[]
 const stopCtxCache = new Map() // atco -> breadcrumb context ["York", …]
 let towards = null // { key, links:Set<slug>, times:[{line,slug,time,tomorrow}] }
@@ -61,9 +60,7 @@ export function bootBoard(app, origin) {
   toInfo = null
   toArrivals = null
   toDir = null
-  lineFilter = null
   originServices = []
-  svcOpen = false
   towards = null
   boardOrigin = origin
   const el = document.createElement('section')
@@ -95,10 +92,6 @@ export function bootBoard(app, origin) {
       <select id="op-select"></select>
     </form>
 
-    <div class="line-filter" id="line-filter" hidden></div>
-
-<!-- svc-panel removed in favor of stop panels -->
-
     <ul class="departures" id="dep-list" aria-live="polite"></ul>
     <p class="board-foot" id="board-foot"></p>
     <p class="fare-note" id="fare-note" hidden></p>
@@ -126,7 +119,6 @@ export function bootBoard(app, origin) {
   const swap = el.querySelector('#btn-swap')
   const clear = el.querySelector('#btn-clear')
   const toRow = el.querySelector('#to-row')
-  const lineFilterEl = el.querySelector('#line-filter')
 
   // Route numbers are delegated: rows are re-rendered wholesale on every poll,
   // so per-row listeners would be thrown away every 20s.
@@ -134,21 +126,6 @@ export function bootBoard(app, origin) {
   list.addEventListener('click', (e) => {
     const btn = routeBtn(e.target)
     if (btn) tapRoute(btn, routeOpts(btn))
-  })
-
-
-  lineFilterEl.addEventListener('click', (e) => {
-    const go = e.target.closest('[data-route]')
-    if (go) {
-      tapRoute(go, routeOpts(go, serviceBySlug(go.dataset.route)))
-      return
-    }
-    if (e.target.closest('.lf-x')) {
-      lineFilter = null
-      renderLineFilter()
-      renderRows()
-      renderSvcPanel()
-    }
   })
 
   const openToSearch = () => openSearch(applyToStop, 'to')
@@ -228,7 +205,6 @@ export function bootBoard(app, origin) {
       stamp.textContent = `updated ${fmtTime()}`
       buildFilterOptions(select, opSelect)
       renderRows()
-      refreshSvcPanel()
       refreshFareOps()
       void background
     } catch (err) {
@@ -464,103 +440,6 @@ async function ensureOriginServices() {
   return originServices
 }
 
-function nextTimeFor(slug, line) {
-  const hit = (boardState?.departures || []).find(
-    (d) => (slug && serviceSlug(d) === slug) || (!slug && d.line === line)
-  )
-  return hit ? hit.expected || hit.scheduled || null : null
-}
-
-function lineSort(a, b) {
-  return String(a.line).localeCompare(String(b.line), 'en-GB', { numeric: true })
-}
-
-function renderSvcPanel() {
-  const toggle = document.getElementById('svc-toggle')
-  const list = document.getElementById('svc-list')
-  if (!toggle || !list) return
-  if (!originServices.length) {
-    // A merged board only learns its service list once asked, so the toggle
-    // leads with the promise and the count arrives with the answer.
-    toggle.hidden = atcosOf(boardOrigin).length === 0
-    toggle.textContent = 'Every service calling here — see the full list ▾'
-    toggle.setAttribute('aria-expanded', String(svcOpen))
-    list.hidden = !svcOpen
-    if (svcOpen && !list.childElementCount) {
-      list.innerHTML = `<p class="svc-loading">Checking which services call here…</p>`
-    }
-    return
-  }
-  const n = originServices.length
-  toggle.hidden = false
-  list.hidden = !svcOpen
-  toggle.setAttribute('aria-expanded', String(svcOpen))
-  toggle.textContent = svcOpen
-    ? `Hide the ${n} services calling here ▴`
-    : `${n} ${n === 1 ? 'service calls' : 'services call'} here — see all ▾`
-  list.innerHTML = originServices
-    .slice()
-    .sort(lineSort)
-    .map((svc) => {
-      const next = nextTimeFor(svc.slug, svc.line)
-      const active = lineFilter?.slug === svc.slug
-      return `<button class="svc-chip${active ? ' on' : ''}${next ? '' : ' quiet'}" type="button"
-        data-svc="${escapeHtml(svc.slug)}" data-line="${escapeHtml(svc.line || '')}"
-        aria-pressed="${active}"
-        title="${escapeHtml(next ? `Next ${next} — show only this service` : 'No departures in the next 24 hours — show only this service')}">
-        <b>${escapeHtml(svc.line || '?')}</b>
-        <span>${escapeHtml(svc.headline || '')}</span>
-        <small>${next ? escapeHtml(next) : '–'}</small>
-      </button>`
-    })
-    .join('')
-}
-
-function setLineFilter(slug) {
-  const svc = serviceBySlug(slug)
-  lineFilter = lineFilter?.slug === slug ? null : { slug, line: svc?.line || '' }
-  renderLineFilter()
-  renderRows()
-  markSvcChips()
-}
-
-// Chips are long-lived so the next departure times and the pressed state are
-// patched in place — re-rendering on every poll would drop keyboard focus.
-function refreshSvcPanel() {
-  const list = document.getElementById('svc-list')
-  if (list && !list.hidden && list.querySelector('.svc-chip')) markSvcChips()
-  else renderSvcPanel()
-}
-
-function markSvcChips() {
-  for (const chip of document.querySelectorAll('#svc-list [data-svc]')) {
-    const active = lineFilter?.slug === chip.dataset.svc
-    const next = nextTimeFor(chip.dataset.svc, chip.dataset.line)
-    chip.classList.toggle('on', active)
-    chip.classList.toggle('quiet', !next)
-    chip.setAttribute('aria-pressed', String(active))
-    const small = chip.querySelector('small')
-    if (small) small.textContent = next || '–'
-  }
-}
-
-function renderLineFilter() {
-  const box = document.getElementById('line-filter')
-  if (!box) return
-  if (!lineFilter) {
-    box.hidden = true
-    box.replaceChildren()
-    return
-  }
-  const svc = serviceBySlug(lineFilter.slug)
-  box.hidden = false
-  box.innerHTML = `
-    <button class="lf-go" type="button" data-route="${escapeHtml(lineFilter.slug)}" data-line="${escapeHtml(lineFilter.line || '')}"
-      title="Show the stops on this route">▤ Route ${escapeHtml(lineFilter.line || '')} stops</button>
-    <span class="lf-name">${escapeHtml(svc?.headline || '')}</span>
-    <button class="lf-x" type="button" aria-label="Clear route filter">✕</button>`
-}
-
 function refreshFareOps() {
   const ops = new Set()
   for (const svc of toInfo?.services || []) for (const op of svcOps(svc)) ops.add(op)
@@ -571,8 +450,6 @@ function refreshFareOps() {
       fareOps = ops
       originServices = services
       renderFareNote()
-      renderLineFilter()
-      refreshSvcPanel()
     })
   } else {
     fareOps = ops
@@ -675,12 +552,6 @@ function servesTo(item) {
 function applyFilters(all) {
   let rows = toInfo ? all.filter(servesTo) : all
   const { operator, destination } = getState()
-  if (lineFilter) {
-    rows = rows.filter((r) => {
-      const slug = serviceSlug(r)
-      return slug ? slug === lineFilter.slug : r.line === lineFilter.line
-    })
-  }
   if (operator) rows = rows.filter((r) => operatorsFor(r, serviceSlug(r)).includes(operator))
   if (destination) rows = rows.filter((r) => r.destination === destination)
   return rows
@@ -763,16 +634,7 @@ function renderRows() {
   select.disabled = toInfo && !matching.length
 
   if (!rows.length) {
-    list.innerHTML = `<li class="empty">${nothingMsg()}${
-      lineFilter
-        ? `<br><button id="clear-route" type="button">Clear route ${escapeHtml(lineFilter.line || '')} filter</button>`
-        : ''
-    }</li>`
-    list.querySelector('#clear-route')?.addEventListener('click', () => {
-      lineFilter = null
-      renderLineFilter()
-      renderRows()
-    })
+    list.innerHTML = `<li class="empty">${nothingMsg()}</li>`
     foot.textContent = ''
     return
   }
@@ -824,11 +686,9 @@ function renderRows() {
     .join('')
 
   const omitted = matching.length - rows.length
-  const routeNote = lineFilter ? ` on route ${lineFilter.line || ''}` : ''
-  markSvcChips()
   foot.textContent = omitted > 0
-    ? `Showing next ${rows.length} of ${matching.length} departures${toInfo ? ' for buses to your destination' : ''}${routeNote}`
-    : `Next ${rows.length} departures${toInfo ? ' — buses that go to your destination' : ''}${routeNote}`
+    ? `Showing next ${rows.length} of ${matching.length} departures${toInfo ? ' for buses to your destination' : ''}`
+    : `Next ${rows.length} departures${toInfo ? ' — buses that go to your destination' : ''}`
 }
 
 function nothingMsg() {
@@ -895,13 +755,6 @@ function bayFromLabel(label) {
   return m ? m[0].replace(/[()]/g, '') : null
 }
 
-function escapeHtml(s) {
-  return String(s ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-}
 function routeNums(lines) {
   const set = new Set()
   for (const l of lines || []) {

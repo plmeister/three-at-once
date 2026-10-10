@@ -248,10 +248,6 @@ export function getGroups() {
   return state.groups
 }
 
-export function getGroup(id) {
-  return state.groups.find((g) => g.id === id) || null
-}
-
 // Flatten members (stops and nested bus groups) into the board's group shape.
 // De-duplicated by atco so the same bay added via two routes counts once.
 export function resolveGroup(g) {

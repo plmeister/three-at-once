@@ -1,6 +1,7 @@
 import { getGroups, saveGroup, removeGroup, resolveGroup, exportData, importData } from './store.js'
 import { searchAll } from './api.js'
 import { groupSearchResults } from './search.js'
+import { escapeHtml } from './html.js'
 
 let dialog = null
 let draft = null // { id?, name, members:[] }
@@ -98,7 +99,7 @@ function renderEditor(msg) {
     <section class="manage-section">
       <label class="manage-field">
         <span>Group name</span>
-        <input id="group-name" type="text" maxlength="40" placeholder="Home, Work, Gym…" value="${escapeAttr(draft.name)}" />
+        <input id="group-name" type="text" maxlength="40" placeholder="Home, Work, Gym…" value="${escapeHtml(draft.name)}" />
       </label>
       <h3>Stops in this group <small>${total}</small></h3>
       <ul class="manage-list" id="member-list">
@@ -235,14 +236,3 @@ function notify() {
   document.dispatchEvent(new Event('whichbus:places'))
 }
 
-function escapeHtml(s) {
-  return String(s ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-}
-
-function escapeAttr(s) {
-  return escapeHtml(s)
-}
